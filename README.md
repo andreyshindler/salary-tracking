@@ -40,6 +40,12 @@ running 22:00–04:00 is one working day and midnight does not reset the counter
 All arithmetic is done in UTC, so a shift crossing the DST change bills the
 real number of hours.
 
+**Overtime is daily only.** It starts after the daily threshold — 8 hours by
+default, editable in Settings — and there is no weekly cap: a week may run past
+42 hours without any additional premium. This is the arrangement the bot was
+built for. If your terms include a weekly overtime rule, this bot does not
+model it.
+
 ## The menu
 
 ```
@@ -187,10 +193,6 @@ salary_bot/
 
 ## Known limitations
 
-- **Weekly overtime is not implemented.** Only the daily threshold is applied.
-  Israeli practice takes the greater of the daily and weekly computations, and
-  implementing half of that interaction would be worse than implementing none —
-  for part-time work against a monthly ceiling the daily rule is what binds.
 - **Schema changes are applied with `create_all`**, not migrations. For a
   single-user SQLite bot that is enough; adding a column later will need a
   manual `ALTER TABLE` or a move to Alembic.
