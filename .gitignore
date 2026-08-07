@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local secrets and data — never commit these
+.env
+*.db
+*.db-wal
+*.db-shm
+data/
+backups/

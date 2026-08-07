@@ -1,0 +1,33 @@
+[Unit]
+Description=Salary tracking Telegram bot
+Documentation=https://github.com/andreyshindler/salary-tracking
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=salarybot
+Group=salarybot
+WorkingDirectory=/opt/salary-tracking
+EnvironmentFile=/opt/salary-tracking/.env
+ExecStart=/opt/salary-tracking/.venv/bin/python -m salary_bot.bot.main
+
+Restart=always
+RestartSec=10s
+
+# The bot polls Telegram and writes one SQLite file; it needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/salary-tracking/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=salary-bot
+
+[Install]
+WantedBy=multi-user.target

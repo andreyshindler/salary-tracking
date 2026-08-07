@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "salary-tracking"
+version = "0.1.0"
+description = "Telegram bot for logging work hours and tracking earnings against a monthly tax-exemption ceiling (Israel)"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot[job-queue]>=21",
+    "SQLAlchemy>=2.0",
+    "hdate>=1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+salary-bot = "salary_bot.bot.main:run"
+
+[tool.setuptools.packages.find]
+include = ["salary_bot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
