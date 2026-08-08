@@ -1,0 +1,29 @@
+services:
+  bot:
+    build: .
+    image: salary-tracking:latest
+    container_name: salary-bot
+    restart: unless-stopped
+
+    # Proper PID 1: reaps zombies and forwards SIGTERM so the bot shuts down
+    # cleanly instead of being killed after the grace period.
+    init: true
+    stop_grace_period: 20s
+
+    env_file: .env
+    environment:
+      DB_PATH: /data/salary.db
+      TZ: Asia/Jerusalem
+
+    # A bind mount rather than a named volume: deploy/backup.sh then works
+    # unchanged against ./data/salary.db, and the file can be copied off the
+    # box without going through docker.
+    volumes:
+      - ./data:/data
+
+    # Without rotation a long-running poller fills the disk over months.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

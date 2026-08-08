@@ -6,6 +6,10 @@
 #
 #   crontab -e
 #   15 3 * * *  /opt/salary-tracking/deploy/backup.sh
+#
+# Runs on the host. Under Docker the database is bind-mounted from ./data, so
+# the default path below is correct either way and no container access is
+# needed. Override DB/DEST if your layout differs.
 set -euo pipefail
 
 DB="${DB:-/opt/salary-tracking/data/salary.db}"

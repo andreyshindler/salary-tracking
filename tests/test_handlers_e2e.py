@@ -246,9 +246,19 @@ async def test_manual_entry_reports_a_parse_error(bot_env, ctx):
 
 @pytest.mark.asyncio
 async def test_status_screen_reflects_logged_hours(bot_env, ctx):
+    # The shift must land in the current month, since the status screen reports
+    # it — but it must not land on a Shabbat, or the 150% premium changes the
+    # total and the test fails purely because of the day it was run on.
+    from salary_bot.core.calendar_service import CalendarService
+    from tests.conftest import workdays
+
+    now = tu.now_local()
+    day = workdays(CalendarService("tel_aviv"), now.year, now.month, 1)[0]
+
     ctx.user_data["awaiting"] = "manual"
-    today = tu.now_local().date()
-    await manual.handle_text(FakeUpdate(text=f"{today:%d/%m/%Y} 09:00 15:00"), ctx)
+    await manual.handle_text(
+        FakeUpdate(text=f"{day:02d}/{now.month:02d}/{now.year} 09:00 15:00"), ctx
+    )
 
     status = FakeUpdate(callback="st:cur")
     await reports.show_status(status, ctx)

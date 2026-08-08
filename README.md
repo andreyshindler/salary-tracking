@@ -99,30 +99,54 @@ Each is independently switchable in Settings:
   at the moment the hours are logged;
 - a summary when the month rolls over and the counter resets.
 
-## Setup
+## Setup with Docker
 
 ```bash
 git clone https://github.com/andreyshindler/salary-tracking.git /opt/salary-tracking
 cd /opt/salary-tracking
-python3 -m venv .venv
-.venv/bin/pip install -e .
 
 cp .env.example .env
 $EDITOR .env          # BOT_TOKEN from @BotFather
+
+# The container runs as uid 10001. A host directory owned by root gives SQLite
+# a permission error on the first write, so set the ownership before starting.
+mkdir -p data && sudo chown -R 10001:10001 data
+
+docker compose up -d --build
+docker compose logs -f
 ```
 
-Leave `ALLOWED_USER_IDS` empty at first, run the bot, and send it `/start` — it
-refuses the message but replies with your Telegram user ID. Put that in `.env`
-and restart.
-
-```bash
-.venv/bin/python -m salary_bot.bot.main
-```
+Leave `ALLOWED_USER_IDS` empty at first and send the bot `/start` — it refuses
+the message but replies with your Telegram user ID. Put that in `.env`, then
+`docker compose up -d` to pick it up.
 
 Then, in the bot: **⚙️ הגדרות** → set your **hourly rate** and your **city**.
 The ceiling is pre-seeded at 10,113 ₪/month and can be changed there too.
 
-### Running as a service
+Day to day:
+
+```bash
+docker compose logs -f            # follow the log
+docker compose restart            # after editing .env
+docker compose up -d --build      # after git pull
+docker compose down               # stop
+```
+
+The database lives at `./data/salary.db` on the host, bind-mounted to `/data` in
+the container. It survives rebuilds; `docker compose down` does not touch it.
+Container logs are capped at 3 × 10 MB so a long-running poller cannot fill the
+disk.
+
+## Setup without Docker
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+cp .env.example .env && $EDITOR .env
+.venv/bin/python -m salary_bot.bot.main
+```
+
+To run it as a systemd service instead of a container:
 
 ```bash
 sudo useradd --system --home /opt/salary-tracking salarybot
@@ -133,7 +157,7 @@ sudo systemctl enable --now salary-bot
 sudo journalctl -u salary-bot -f
 ```
 
-### Backups
+## Backups
 
 The whole dataset is one SQLite file. `deploy/backup.sh` takes a consistent
 snapshot with sqlite3's backup API (a plain `cp` can catch a WAL database
@@ -141,6 +165,13 @@ mid-write) and prunes copies older than 30 days:
 
 ```
 15 3 * * *  /opt/salary-tracking/deploy/backup.sh
+```
+
+It runs on the host against the bind-mounted file and needs no access to the
+container. Override `DB` if your paths differ:
+
+```bash
+DB=/opt/salary-tracking/data/salary.db deploy/backup.sh
 ```
 
 **⚙️ הגדרות → 💾 גיבוי** sends the same snapshot to you over Telegram on demand.
