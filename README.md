@@ -127,10 +127,15 @@ Day to day:
 
 ```bash
 docker compose logs -f            # follow the log
-docker compose restart            # after editing .env
+docker compose up -d              # after editing .env
 docker compose up -d --build      # after git pull
 docker compose down               # stop
 ```
+
+Note `up -d` rather than `restart` after editing `.env`. Environment variables
+are fixed when a container is created, so `docker compose restart` starts the
+same container with the same stale values and your edit appears to do nothing.
+`up -d` notices the changed config and recreates the container.
 
 The database lives at `./data/salary.db` on the host, bind-mounted to `/data` in
 the container. It survives rebuilds; `docker compose down` does not touch it.
