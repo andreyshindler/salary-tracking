@@ -5,15 +5,15 @@
 # catch the database mid-write and produce an unusable file.
 #
 #   crontab -e
-#   15 3 * * *  /opt/salary-tracking/deploy/backup.sh
+#   15 3 * * *  /home/komodo/projects/salary-tracking/deploy/backup.sh
 #
 # Runs on the host. Under Docker the database is bind-mounted from ./data, so
 # the default path below is correct either way and no container access is
 # needed. Override DB/DEST if your layout differs.
 set -euo pipefail
 
-DB="${DB:-/opt/salary-tracking/data/salary.db}"
-DEST="${DEST:-/opt/salary-tracking/backups}"
+DB="${DB:-/home/komodo/projects/salary-tracking/data/salary.db}"
+DEST="${DEST:-/home/komodo/projects/salary-tracking/backups}"
 KEEP_DAYS="${KEEP_DAYS:-30}"
 
 mkdir -p "$DEST"

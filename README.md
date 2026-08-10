@@ -102,8 +102,8 @@ Each is independently switchable in Settings:
 ## Setup with Docker
 
 ```bash
-git clone https://github.com/andreyshindler/salary-tracking.git /opt/salary-tracking
-cd /opt/salary-tracking
+git clone https://github.com/andreyshindler/salary-tracking.git /home/komodo/projects/salary-tracking
+cd /home/komodo/projects/salary-tracking
 
 cp .env.example .env
 $EDITOR .env          # BOT_TOKEN from @BotFather
@@ -137,6 +137,22 @@ the container. It survives rebuilds; `docker compose down` does not touch it.
 Container logs are capped at 3 × 10 MB so a long-running poller cannot fill the
 disk.
 
+### Managing it with Komodo
+
+The compose file sits at the repository root, so pointing a Komodo stack at this
+repo works as-is: `build: .` and the `./data` bind mount both resolve relative to
+the cloned stack directory.
+
+Two things Komodo will not do for you:
+
+- **The data directory ownership.** The container runs as uid 10001, so run
+  `mkdir -p data && sudo chown -R 10001:10001 data` in the stack directory once,
+  or the first SQLite write fails with a permission error.
+- **The environment.** `docker-compose.yml` reads `env_file: .env`, so the
+  variables must reach the stack as a `.env` file in that directory. Compose
+  refuses to start if it is missing, which is deliberate — a bot with no
+  `BOT_TOKEN` should fail loudly rather than crash-loop.
+
 ## Setup without Docker
 
 ```bash
@@ -149,8 +165,8 @@ cp .env.example .env && $EDITOR .env
 To run it as a systemd service instead of a container:
 
 ```bash
-sudo useradd --system --home /opt/salary-tracking salarybot
-sudo chown -R salarybot:salarybot /opt/salary-tracking
+sudo useradd --system --home /home/komodo/projects/salary-tracking salarybot
+sudo chown -R salarybot:salarybot /home/komodo/projects/salary-tracking
 sudo cp deploy/salary-bot.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now salary-bot
@@ -164,14 +180,14 @@ snapshot with sqlite3's backup API (a plain `cp` can catch a WAL database
 mid-write) and prunes copies older than 30 days:
 
 ```
-15 3 * * *  /opt/salary-tracking/deploy/backup.sh
+15 3 * * *  /home/komodo/projects/salary-tracking/deploy/backup.sh
 ```
 
 It runs on the host against the bind-mounted file and needs no access to the
 container. Override `DB` if your paths differ:
 
 ```bash
-DB=/opt/salary-tracking/data/salary.db deploy/backup.sh
+DB=/home/komodo/projects/salary-tracking/data/salary.db deploy/backup.sh
 ```
 
 **⚙️ הגדרות → 💾 גיבוי** sends the same snapshot to you over Telegram on demand.
