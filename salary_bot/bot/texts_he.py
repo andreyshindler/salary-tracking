@@ -172,3 +172,43 @@ MONTH_RESET = (
 
 ERROR_GENERIC = "משהו השתבש. נסה שוב."
 NOT_AUTHORISED = "הבוט הזה פרטי."
+
+# ------------------------------------------------------------- access control
+
+ACCESS_REQUESTED = (
+    "🔒 הבוט הזה פרטי ודורש אישור של המנהל.\n\n"
+    "שלחתי את הבקשה שלך. תקבל הודעה ברגע שהיא תאושר.\n\n"
+    "המזהה שלך: <code>{id}</code>"
+)
+ACCESS_PENDING = (
+    "⏳ הבקשה שלך כבר נשלחה וממתינה לאישור המנהל.\n\n"
+    "המזהה שלך: <code>{id}</code>"
+)
+ACCESS_DENIED = "🚫 אין לך גישה לבוט הזה."
+ACCESS_GRANTED_NOTICE = (
+    "✅ <b>קיבלת גישה!</b>\n\n"
+    "שלח /start כדי להתחיל.\n"
+    "אל תשכח להגדיר תעריף שעתי ועיר ב‑⚙️ הגדרות."
+)
+ACCESS_REVOKED_NOTICE = "🚫 הגישה שלך לבוט בוטלה."
+
+ADMIN_ACCESS_REQUEST = (
+    "🔔 <b>בקשת גישה חדשה</b>\n\n"
+    "‏{name}\n"
+    "מזהה: <code>{id}</code>"
+)
+ADMIN_APPROVED = "✅ {name} אושר וקיבל גישה."
+ADMIN_DENIED = "🚫 הבקשה של {name} נדחתה."
+ADMIN_REVOKED = "🚫 הגישה של {name} בוטלה."
+ADMIN_ONLY = "הפעולה הזו זמינה למנהל בלבד."
+
+BTN_USERS = "👥 משתמשים"
+BTN_APPROVE = "✅ אשר"
+BTN_DENY = "❌ דחה"
+BTN_REVOKE = "🚫 בטל גישה"
+
+USERS_TITLE = "👥 <b>ניהול משתמשים</b>"
+USERS_PENDING = "ממתינים לאישור:"
+USERS_APPROVED = "מאושרים:"
+USERS_NONE_PENDING = "אין בקשות ממתינות."
+USER_NOT_FOUND = "המשתמש לא נמצא."

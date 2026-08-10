@@ -98,16 +98,21 @@ def reports_menu() -> Markup:
     ])
 
 
-def settings_menu() -> Markup:
-    return Markup([
+def settings_menu(is_admin: bool = False, pending_count: int = 0) -> Markup:
+    rows = [
         [Btn(T.BTN_SET_RATE, callback_data="set:rate"),
          Btn(T.BTN_SET_CEILING, callback_data="set:ceil")],
         [Btn(T.BTN_SET_CITY, callback_data="set:city")],
         [Btn(T.BTN_SET_OT, callback_data="set:ot")],
         [Btn(T.BTN_SET_NOTIF, callback_data="set:notif")],
         [Btn(T.BTN_SET_BACKUP, callback_data="set:backup")],
-        [Btn(T.BTN_BACK, callback_data=CB_MAIN)],
-    ])
+    ]
+    if is_admin:
+        # Surface the count so waiting requests are visible without opening it.
+        label = T.BTN_USERS + (f" ({pending_count})" if pending_count else "")
+        rows.append([Btn(label, callback_data="acc:list")])
+    rows.append([Btn(T.BTN_BACK, callback_data=CB_MAIN)])
+    return Markup(rows)
 
 
 def city_picker(current: str) -> Markup:
@@ -157,3 +162,47 @@ def onboarding(needs_rate: bool) -> Markup:
 
 def cancel_only() -> Markup:
     return Markup([[Btn(T.BTN_CANCEL, callback_data=CB_MAIN)]])
+
+
+# ------------------------------------------------------------ access control
+
+def access_request(tg_user_id: int) -> Markup:
+    """Approve/deny straight from the notification, so a request needs no
+    navigation to act on."""
+    return Markup([[
+        Btn(T.BTN_APPROVE, callback_data=f"acc:ok:{tg_user_id}"),
+        Btn(T.BTN_DENY, callback_data=f"acc:no:{tg_user_id}"),
+    ]])
+
+
+def users_menu(pending: list, approved: list) -> Markup:
+    """Pending requests first — they are the only rows needing a decision."""
+    rows = []
+    for user in pending:
+        label = _user_label(user)
+        rows.append([
+            Btn(f"✅ {label}", callback_data=f"acc:ok:{user.tg_user_id}"),
+            Btn("❌", callback_data=f"acc:no:{user.tg_user_id}"),
+        ])
+    for user in approved:
+        label = _user_label(user)
+        mark = "👑" if user.is_admin else "👤"
+        rows.append([Btn(f"{mark} {label}", callback_data=f"acc:show:{user.tg_user_id}")])
+    rows.append([Btn(T.BTN_BACK, callback_data="set:menu")])
+    return Markup(rows)
+
+
+def user_detail(tg_user_id: int, is_self: bool) -> Markup:
+    rows = []
+    # Revoking your own access would lock you out of the bot with no way back
+    # except editing the environment, so it is not offered.
+    if not is_self:
+        rows.append([Btn(T.BTN_REVOKE, callback_data=f"acc:rev:{tg_user_id}")])
+    rows.append([Btn(T.BTN_BACK, callback_data="acc:list")])
+    return Markup(rows)
+
+
+def _user_label(user) -> str:
+    from ..core.access import display_name
+
+    return display_name(user)

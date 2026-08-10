@@ -116,7 +116,10 @@ def _all_callback_data() -> set[str]:
         kb.back_only(), kb.cancel_only(),
         kb.after_shift(7), kb.confirm_delete(7), kb.shift_detail(7, "ls:2026:6"),
         kb.month_list([(2026, 9), (2026, 6)], None),
-        kb.reports_menu(), kb.settings_menu(),
+        kb.reports_menu(),
+        kb.settings_menu(), kb.settings_menu(is_admin=True, pending_count=2),
+        kb.access_request(7), kb.user_detail(7, is_self=False),
+        kb.user_detail(7, is_self=True),
         kb.city_picker("tel_aviv"),
         kb.overtime_menu(True, 8.0), kb.overtime_menu(False, 8.0),
         kb.notifications_menu(True, False, True),
@@ -157,7 +160,9 @@ def test_dynamic_shift_callbacks_are_routed(application):
         for h in group
         if isinstance(h, CallbackQueryHandler) and h.pattern is not None
     ]
-    for data in ["ls:2026:9", "sd:123", "del:123", "delok:123", "setcity:jerusalem", "notif:open"]:
+    for data in ["ls:2026:9", "sd:123", "del:123", "delok:123", "setcity:jerusalem",
+                 "notif:open", "acc:list", "acc:ok:123", "acc:no:123", "acc:rev:123",
+                 "acc:show:123"]:
         assert any(re.search(p, data) for p in patterns), f"unrouted: {data}"
 
 

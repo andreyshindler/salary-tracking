@@ -16,82 +16,7 @@ from salary_bot.core import db, repo
 from salary_bot.core import timeutil as tu
 from tests.conftest import RATE
 
-TG_ID = 111
-
-
-# ---------------------------------------------------------------------- stubs
-
-class FakeMessage:
-    def __init__(self, text: str = "", chat_id: int = TG_ID):
-        self.text = text
-        self.chat_id = chat_id
-        self.replies: list[tuple[str, object]] = []
-
-    async def reply_text(self, text, reply_markup=None, **kwargs):
-        self.replies.append((text, reply_markup))
-        return self
-
-
-class FakeCallbackQuery:
-    def __init__(self, data: str, chat_id: int = TG_ID):
-        self.data = data
-        self.message = FakeMessage(chat_id=chat_id)
-        self.answered = False
-        self.edits: list[tuple[str, object]] = []
-
-    async def answer(self, *args, **kwargs):
-        self.answered = True
-
-    async def edit_message_text(self, text, reply_markup=None, **kwargs):
-        self.edits.append((text, reply_markup))
-
-
-class FakeUser:
-    def __init__(self, user_id: int):
-        self.id = user_id
-
-
-class FakeChat:
-    def __init__(self, chat_id: int):
-        self.id = chat_id
-
-
-class FakeUpdate:
-    def __init__(self, *, text: str | None = None, callback: str | None = None,
-                 user_id: int = TG_ID):
-        self.effective_user = FakeUser(user_id)
-        self.effective_chat = FakeChat(user_id)
-        self.message = FakeMessage(text or "") if text is not None else None
-        self.callback_query = FakeCallbackQuery(callback) if callback is not None else None
-
-
-class FakeBot:
-    def __init__(self):
-        self.messages: list[tuple[int, str]] = []
-        self.documents: list[dict] = []
-
-    async def send_message(self, chat_id, text, **kwargs):
-        self.messages.append((chat_id, text))
-
-    async def send_document(self, chat_id, document, caption=None, **kwargs):
-        self.documents.append({"chat_id": chat_id, "document": document, "caption": caption})
-
-
-class FakeContext:
-    def __init__(self):
-        self.bot = FakeBot()
-        self.user_data: dict = {}
-        self.bot_data: dict = {}
-        self.chat_data: dict = {}
-
-
-def last_output(update: FakeUpdate) -> str:
-    """Whatever the handler last put in front of the user."""
-    if update.callback_query and update.callback_query.edits:
-        return update.callback_query.edits[-1][0]
-    if update.message and update.message.replies:
-        return update.message.replies[-1][0]
-    raise AssertionError("handler produced no output")
+from tests.stubs import TG_ID, FakeContext, FakeUpdate, last_output
 
 
 # ------------------------------------------------------------------- fixtures
@@ -121,10 +46,15 @@ def ctx():
 # --------------------------------------------------------------------- tests
 
 @pytest.mark.asyncio
-async def test_unauthorised_user_is_told_their_id(bot_env, ctx):
-    update = FakeUpdate(text="שלום", user_id=999)
+async def test_a_stranger_cannot_reach_the_handlers(bot_env, ctx):
+    """The access flow itself is covered in test_access.py; this only pins that
+    an unapproved user never reaches the feature handlers."""
+    update = FakeUpdate(text="10/06/2026 09:00 15:00", user_id=999)
     await text_input.route(update, ctx)
-    assert "999" in last_output(update)
+
+    out = last_output(update)
+    assert "סה״כ המשמרת" not in out
+    assert "999" in out  # told their ID so the admin can be given it
 
 
 @pytest.mark.asyncio

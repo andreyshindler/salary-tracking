@@ -10,7 +10,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from ...config import Config
-from ...core import db, repo
+from ...core import access, db, repo
 from ...core.calendar_service import CalendarService
 from ...core.cities import get_city
 from .. import keyboards as kb
@@ -38,27 +38,87 @@ def get_calendar(city_key: str) -> CalendarService:
     return cal
 
 
-def is_authorised(user_id: int) -> bool:
-    if CONFIG is None:
-        return False
-    return user_id in CONFIG.allowed_user_ids
+def _bootstrap_ids() -> frozenset[int]:
+    return CONFIG.allowed_user_ids if CONFIG else frozenset()
 
 
-async def reject(update: Update) -> None:
-    """Deny access, but hand back the Telegram user ID.
-
-    An empty allowlist locks everyone out, including the owner on first run, and
-    the ID is the one thing they need to unlock it — so it is echoed here rather
-    than making them hunt for it in the logs.
-    """
-    user_id = update.effective_user.id if update.effective_user else "?"
-    text = f"{T.NOT_AUTHORISED}\n\nהמזהה שלך: <code>{user_id}</code>"
+async def _send(update: Update, text: str, markup=None) -> None:
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await update.callback_query.message.reply_text(
+            text, reply_markup=markup, parse_mode=ParseMode.HTML
+        )
     elif update.message:
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-    log.warning("Rejected message from unauthorised user %s", user_id)
+        await update.message.reply_text(
+            text, reply_markup=markup, parse_mode=ParseMode.HTML
+        )
+
+
+async def guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """The single access gate. True means the handler may proceed.
+
+    Someone with no access is not simply refused: a pending row is recorded and
+    the admin is notified once, so a new user's first message becomes an access
+    request they can act on rather than a dead end.
+    """
+    tg = update.effective_user
+    if tg is None:
+        return False
+
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, tg.id, tg.username, tg.first_name)
+        access.apply_bootstrap(s, user, _bootstrap_ids())
+        s.flush()
+
+        if access.is_approved(user):
+            return True
+
+        status = user.status
+        notify_targets: list[int] = []
+        request_text = ""
+
+        if status == access.PENDING and not user.access_notified:
+            targets = access.admin_ids(s, _bootstrap_ids())
+            # Never notify the requester about their own request.
+            notify_targets = [t for t in targets if t != tg.id]
+            request_text = T.ADMIN_ACCESS_REQUEST.format(
+                name=access.display_name(user), id=tg.id
+            )
+            user.access_notified = True
+            first_request = True
+        else:
+            first_request = False
+
+    if status == access.DENIED:
+        await _send(update, T.ACCESS_DENIED)
+        log.warning("Blocked denied user %s", tg.id)
+        return False
+
+    await _send(
+        update,
+        (T.ACCESS_REQUESTED if first_request else T.ACCESS_PENDING).format(id=tg.id),
+    )
+
+    for admin_id in notify_targets:
+        try:
+            await context.bot.send_message(
+                admin_id, request_text,
+                reply_markup=kb.access_request(tg.id), parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            log.exception("Could not deliver the access request to admin %s", admin_id)
+
+    if first_request and not notify_targets:
+        log.warning(
+            "User %s requested access but there is no admin to notify. "
+            "Add an ID to ALLOWED_USER_IDS and restart.", tg.id
+        )
+    return False
+
+
+def is_admin(tg_user_id: int) -> bool:
+    with db.session_scope() as s:
+        return access.is_admin(s, tg_user_id)
 
 
 async def safe_edit(query, text: str, markup=None) -> None:
@@ -106,8 +166,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
+    if not await guard(update, context):
         return
 
     tg_id = update.effective_user.id
@@ -126,8 +185,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)

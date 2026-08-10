@@ -30,6 +30,18 @@ class User(Base):
     city: Mapped[str] = mapped_column(String(32), default="tel_aviv")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow)
 
+    # Access control. Anyone who messages the bot gets a row immediately so the
+    # request can be reviewed; only "approved" may actually use it.
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Whether the admin has already been told about this pending request, so a
+    # user tapping repeatedly does not send a notification each time.
+    access_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Cached from Telegram so the admin sees a name rather than a bare number
+    # when deciding.
+    tg_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tg_first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     # Settings live inline: this is a single-user bot, so a separate settings
     # table would be a join for nothing.
     daily_ot_threshold: Mapped[float] = mapped_column(Float, default=8.0)

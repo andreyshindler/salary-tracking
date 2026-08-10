@@ -90,6 +90,34 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 `/start` · `/shift` (toggles start/stop) · `/status` · `/add` · `/report` ·
 `/settings` · `/undo` · `/help`
 
+## Access control
+
+The bot is private. Anyone who messages it who is not yet approved is told that
+admin approval is needed, and the admin receives their name and ID with
+**✅ אשר / ❌ דחה** buttons — a stranger's first message becomes a request the
+admin can act on in one tap, rather than a dead end.
+
+- Approved users are notified and get their **own** rate, ceiling, city and
+  shifts. Nothing is shared between accounts.
+- Denied users are told once and cannot reach any feature.
+- The admin manages everyone from **⚙️ הגדרות → 👥 משתמשים**, which shows the
+  number of waiting requests and allows revoking access later.
+
+`ALLOWED_USER_IDS` has exactly one job: **bootstrapping**. Anyone listed there
+becomes an approved admin on first contact, which solves the chicken-and-egg
+problem of needing an admin before anyone can be approved. Everything after that
+lives in the database, because an admin tapping a button cannot rewrite `.env` —
+and even if it could, environment variables are fixed when a container is
+created.
+
+Adding an ID back to `ALLOWED_USER_IDS` and restarting is also the recovery
+route if an admin ever loses access.
+
+Access is re-checked against the database on every action. Callback data is just
+a string the client sends back, so hiding an admin button is not a control —
+`acc:ok:<id>` could be sent by hand. The tests assert that an approved
+non-admin forging that callback cannot approve anyone.
+
 ## Notifications
 
 Each is independently switchable in Settings:
@@ -245,9 +273,10 @@ salary_bot/
 
 ## Known limitations
 
-- **Schema changes are applied with `create_all`**, not migrations. For a
-  single-user SQLite bot that is enough; adding a column later will need a
-  manual `ALTER TABLE` or a move to Alembic.
+- **Schema changes use `create_all` plus a small additive migration** in
+  `core/db.py` (`_ADDED_COLUMNS`), not Alembic. It adds missing columns on
+  startup and is idempotent, but it only ever *adds* — renaming or retyping a
+  column would still need doing by hand.
 - Rest-day boundaries use candle lighting and havdalah, which is the customary
   reading of the 36-hour weekly rest. If your employer computes it differently,
   the numbers will differ.

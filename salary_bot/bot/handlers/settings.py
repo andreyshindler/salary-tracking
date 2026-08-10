@@ -10,7 +10,7 @@ from telegram import InputFile, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from ...core import db, repo
+from ...core import access, db, repo
 from ...core import timeutil as tu
 from ...core.cities import get_city
 from ...core.parsing import ParseError, parse_amount, parse_hours
@@ -18,14 +18,8 @@ from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
 from . import common
-from .common import clear_awaiting, is_authorised, reject, safe_edit, set_awaiting
+from .common import clear_awaiting, guard, safe_edit, set_awaiting
 
-
-async def _guard(update: Update) -> bool:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
-        return False
-    return True
 
 
 async def _reply(update: Update, text: str, markup=None) -> None:
@@ -36,6 +30,14 @@ async def _reply(update: Update, text: str, markup=None) -> None:
         await update.message.reply_text(
             text, reply_markup=markup, parse_mode=ParseMode.HTML
         )
+
+
+def _settings_markup(tg_user_id: int):
+    """Settings keyboard, with the user-management entry only for admins."""
+    with db.session_scope() as s:
+        admin = access.is_admin(s, tg_user_id)
+        pending = len(access.users_by_status(s, access.PENDING)) if admin else 0
+    return kb.settings_menu(admin, pending)
 
 
 def _summary(s, user) -> str:
@@ -57,33 +59,33 @@ def _summary(s, user) -> str:
 
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     clear_awaiting(context)
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
         text = _summary(s, user)
-    await _reply(update, text, kb.settings_menu())
+    await _reply(update, text, _settings_markup(update.effective_user.id))
 
 
 # ------------------------------------------------------------- value prompts
 
 async def cb_ask_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     set_awaiting(context, "rate")
     await _reply(update, T.ASK_RATE, kb.cancel_only())
 
 
 async def cb_ask_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     set_awaiting(context, "ceiling")
     await _reply(update, T.ASK_CEILING, kb.cancel_only())
 
 
 async def cb_ask_ot_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     set_awaiting(context, "ot_threshold")
     await _reply(update, T.ASK_OT_THRESHOLD, kb.cancel_only())
@@ -109,7 +111,7 @@ async def handle_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     clear_awaiting(context)
     await update.message.reply_text(
         T.RATE_SAVED.format(rate=fmt.fmt_money(agorot)),
-        reply_markup=kb.settings_menu(), parse_mode=ParseMode.HTML,
+        reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
 
@@ -131,7 +133,7 @@ async def handle_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     clear_awaiting(context)
     await update.message.reply_text(
         T.CEILING_SAVED.format(ceiling=fmt.fmt_money(agorot)),
-        reply_markup=kb.settings_menu(), parse_mode=ParseMode.HTML,
+        reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
 
@@ -149,14 +151,14 @@ async def handle_ot_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE
     clear_awaiting(context)
     await update.message.reply_text(
         T.OT_THRESHOLD_SAVED.format(thr=f"{hours:g}"),
-        reply_markup=kb.settings_menu(), parse_mode=ParseMode.HTML,
+        reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
 
 # ---------------------------------------------------------------------- city
 
 async def cb_city_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -165,7 +167,7 @@ async def cb_city_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cb_set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     city_key = update.callback_query.data.split(":")[1]
     with db.session_scope() as s:
@@ -173,13 +175,13 @@ async def cb_set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user.city = city_key
         s.flush()
         text = T.CITY_SAVED.format(city=get_city(city_key).name_he) + "\n\n" + _summary(s, user)
-    await _reply(update, text, kb.settings_menu())
+    await _reply(update, text, _settings_markup(update.effective_user.id))
 
 
 # ------------------------------------------------------------------ overtime
 
 async def cb_overtime_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -194,7 +196,7 @@ async def cb_overtime_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -209,7 +211,7 @@ async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ------------------------------------------------------------- notifications
 
 async def cb_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -218,7 +220,7 @@ async def cb_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cb_toggle_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     which = update.callback_query.data.split(":")[1]
     field = {
@@ -243,12 +245,12 @@ async def cb_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     Uses sqlite3's online backup API rather than copying the file: with WAL
     enabled, a plain copy can catch the database mid-write and arrive corrupt.
     """
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     await update.callback_query.answer()
 
     if common.CONFIG is None:
-        await _reply(update, T.ERROR_GENERIC, kb.settings_menu())
+        await _reply(update, T.ERROR_GENERIC, _settings_markup(update.effective_user.id))
         return
 
     source_path = Path(common.CONFIG.db_path)

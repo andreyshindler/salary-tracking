@@ -14,13 +14,12 @@ from ...core.parsing import ParseError, parse_manual_entry
 from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
-from .common import clear_awaiting, get_calendar, is_authorised, reject, safe_edit, set_awaiting
+from .common import clear_awaiting, get_calendar, guard, safe_edit, set_awaiting
 from .shift import MAX_SHIFT_HOURS, _ceiling_alert
 
 
 async def cb_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
+    if not await guard(update, context):
         return
     set_awaiting(context, "manual")
     await update.callback_query.answer()
@@ -28,8 +27,7 @@ async def cb_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
+    if not await guard(update, context):
         return
     set_awaiting(context, "manual")
     await update.message.reply_text(

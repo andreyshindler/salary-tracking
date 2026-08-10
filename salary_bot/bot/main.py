@@ -12,7 +12,7 @@ from telegram.ext import (
 from ..config import load_config
 from ..core import db
 from . import notifications
-from .handlers import common, manual, reports, settings, shift, text_input
+from .handlers import admin, common, manual, reports, settings, shift, text_input
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +87,11 @@ def build_application(config) -> Application:
     app.add_handler(CallbackQueryHandler(settings.cb_notifications, pattern=r"^set:notif$"))
     app.add_handler(CallbackQueryHandler(settings.cb_toggle_notification, pattern=r"^notif:"))
     app.add_handler(CallbackQueryHandler(settings.cb_backup, pattern=r"^set:backup$"))
+
+    # ---- access control (admin only; every handler re-checks)
+    app.add_handler(CallbackQueryHandler(admin.cb_list, pattern=r"^acc:list$"))
+    app.add_handler(CallbackQueryHandler(admin.cb_show, pattern=r"^acc:show:\d+$"))
+    app.add_handler(CallbackQueryHandler(admin.cb_decide, pattern=r"^acc:(ok|no|rev):\d+$"))
 
     # ---- free text, last so it never shadows a command
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input.route))

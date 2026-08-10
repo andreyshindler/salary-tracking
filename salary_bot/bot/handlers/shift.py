@@ -15,18 +15,11 @@ from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
 from .common import (
-    clear_awaiting, get_calendar, is_authorised, main_menu_markup, reject,
-    safe_edit, set_awaiting,
+    clear_awaiting, get_calendar, guard, main_menu_markup, safe_edit, set_awaiting,
 )
 
 MAX_SHIFT_HOURS = 24
 
-
-async def _guard(update: Update) -> bool:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
-        return False
-    return True
 
 
 async def _reply(update: Update, text: str, markup=None) -> None:
@@ -73,14 +66,14 @@ async def start_shift_at(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def cb_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     clear_awaiting(context)
     await start_shift_at(update, context, tu.now_utc())
 
 
 async def cb_start_earlier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     set_awaiting(context, "start_time")
     await _reply(update, T.ASK_START_TIME, kb.cancel_only())
@@ -89,7 +82,7 @@ async def cb_start_earlier(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # -------------------------------------------------------------------- ending
 
 async def cb_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     clear_awaiting(context)
     tg_id = update.effective_user.id
@@ -153,7 +146,7 @@ def _ceiling_alert(s, user, status) -> str | None:
 async def cb_cancel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Discard an open shift without recording it — for a start pressed by
     mistake, which must not become a zero-length entry."""
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -167,7 +160,7 @@ async def cb_cancel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_shift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/shift toggles: it ends an open shift, otherwise starts one."""
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -181,7 +174,7 @@ async def cmd_shift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # -------------------------------------------------------------------- listing
 
 async def cb_month_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -194,7 +187,7 @@ async def cb_month_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def cb_shifts_of_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     _, year_s, month_s = update.callback_query.data.split(":")
     year, month = int(year_s), int(month_s)
@@ -219,7 +212,7 @@ async def cb_shifts_of_month(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cb_shift_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     shift_id = int(update.callback_query.data.split(":")[1])
 
@@ -238,7 +231,7 @@ async def cb_shift_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def cb_delete_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     shift_id = int(update.callback_query.data.split(":")[1])
 
@@ -255,7 +248,7 @@ async def cb_delete_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cb_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     shift_id = int(update.callback_query.data.split(":")[1])
 
@@ -273,7 +266,7 @@ async def cb_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Delete the most recent closed shift, after confirming."""
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)

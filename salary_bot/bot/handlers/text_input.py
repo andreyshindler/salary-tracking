@@ -15,7 +15,7 @@ from ...core import timeutil as tu
 from ...core.parsing import ParseError, parse_time_of_day
 from .. import keyboards as kb
 from . import manual, settings, shift
-from .common import clear_awaiting, is_authorised, reject
+from .common import clear_awaiting, guard
 
 
 async def _handle_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -47,8 +47,7 @@ HANDLERS = {
 
 
 async def route(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
+    if not await guard(update, context):
         return
 
     awaiting = context.user_data.get("awaiting")

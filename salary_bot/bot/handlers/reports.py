@@ -14,14 +14,8 @@ from ...core import timeutil as tu
 from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
-from .common import get_calendar, is_authorised, reject, safe_edit
+from .common import get_calendar, guard, safe_edit
 
-
-async def _guard(update: Update) -> bool:
-    if not is_authorised(update.effective_user.id):
-        await reject(update)
-        return False
-    return True
 
 
 async def _reply(update: Update, text: str, markup=None) -> None:
@@ -36,7 +30,7 @@ async def _reply(update: Update, text: str, markup=None) -> None:
 
 
 async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -48,13 +42,13 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cb_reports_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     await _reply(update, "📈 בחר דוח:", kb.reports_menu())
 
 
 async def cb_month_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -64,7 +58,7 @@ async def cb_month_report(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def cb_tier_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -90,7 +84,7 @@ async def cb_tier_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cb_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
@@ -100,7 +94,7 @@ async def cb_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cb_year_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     year = tu.now_local().year
     with db.session_scope() as s:
@@ -116,7 +110,7 @@ async def cb_year_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cb_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """One row per priced segment — the form an accountant can actually check."""
-    if not await _guard(update):
+    if not await guard(update, context):
         return
     await update.callback_query.answer()
 

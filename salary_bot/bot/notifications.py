@@ -12,15 +12,14 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
-from sqlalchemy import select
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from ..config import ISRAEL_TZ
+from ..core import access
 from ..core import ceiling as ceiling_mod
 from ..core import db, repo
 from ..core import timeutil as tu
-from ..core.models import User
 from . import formatting as fmt
 from . import texts_he as T
 
@@ -40,7 +39,7 @@ async def check_open_shifts(context: ContextTypes.DEFAULT_TYPE) -> None:
     now = tu.now_utc()
 
     with db.session_scope() as s:
-        users = list(s.execute(select(User)).scalars())
+        users = access.approved_users(s)
         pending: list[tuple[int, str, float]] = []
         for user in users:
             if not user.notify_open_shift:
@@ -76,7 +75,7 @@ async def month_rollover(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     previous = today - dt.timedelta(days=1)
     with db.session_scope() as s:
-        users = list(s.execute(select(User)).scalars())
+        users = access.approved_users(s)
         messages: list[tuple[int, str]] = []
         for user in users:
             if not user.notify_month_summary:
