@@ -14,6 +14,14 @@ services:
     environment:
       DB_PATH: /data/salary.db
       TZ: Asia/Jerusalem
+      WEBAPP_PORT: 8080
+
+    # The Mini App server. Only listening when WEBAPP_URL is set; point your
+    # reverse proxy here and give it a certificate, since Telegram will not
+    # open anything but HTTPS. Bound to localhost so nothing is exposed
+    # directly — remove the 127.0.0.1 prefix only if the proxy is elsewhere.
+    ports:
+      - "127.0.0.1:8080:8080"
 
     # A bind mount rather than a named volume: deploy/backup.sh then works
     # unchanged against ./data/salary.db, and the file can be copied off the

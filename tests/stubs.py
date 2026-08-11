@@ -7,10 +7,18 @@ from __future__ import annotations
 TG_ID = 111
 
 
+class FakeWebAppData:
+    def __init__(self, data: str):
+        self.data = data
+        self.button_text = "open"
+
+
 class FakeMessage:
-    def __init__(self, text: str = "", chat_id: int = TG_ID):
+    def __init__(self, text: str = "", chat_id: int = TG_ID,
+                 web_app_data: str | None = None):
         self.text = text
         self.chat_id = chat_id
+        self.web_app_data = FakeWebAppData(web_app_data) if web_app_data else None
         self.replies: list[tuple[str, object]] = []
 
     async def reply_text(self, text, reply_markup=None, **kwargs):
@@ -50,10 +58,14 @@ class FakeChat:
 
 class FakeUpdate:
     def __init__(self, *, text: str | None = None, callback: str | None = None,
-                 user_id: int = TG_ID):
+                 web_app_data: str | None = None, user_id: int = TG_ID):
         self.effective_user = FakeUser(user_id)
         self.effective_chat = FakeChat(user_id)
-        self.message = FakeMessage(text or "") if text is not None else None
+        self.message = None
+        if web_app_data is not None:
+            self.message = FakeMessage(chat_id=user_id, web_app_data=web_app_data)
+        elif text is not None:
+            self.message = FakeMessage(text, chat_id=user_id)
         self.callback_query = FakeCallbackQuery(callback) if callback is not None else None
 
 

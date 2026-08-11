@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>יומן שעות</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* Colours come from Telegram's theme so the app matches the client in both
+     light and dark, rather than fighting it. */
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #000000);
+    --hint: var(--tg-theme-hint-color, #999999);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --button: var(--tg-theme-button-color, #2481cc);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f1f1f1);
+    --item-h: 40px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 12px 12px 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 16px;
+  }
+  h2 { font-size: 17px; margin: 0; font-weight: 600; }
+
+  .card {
+    background: var(--secondary-bg);
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+
+  /* ---------------------------------------------------------- month header */
+  .month-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .month-bar button {
+    background: none; border: 0; color: var(--link);
+    font-size: 22px; padding: 4px 14px; cursor: pointer; line-height: 1;
+  }
+
+  /* --------------------------------------------------------------- calendar */
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dow { text-align: center; font-size: 12px; color: var(--hint); padding: 4px 0; }
+  .day {
+    aspect-ratio: 1; border: 0; border-radius: 10px;
+    background: var(--bg); color: var(--text);
+    font-size: 15px; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .day.blank { background: none; cursor: default; }
+  .day.rest { color: var(--link); font-weight: 600; }
+  .day.today { outline: 2px solid var(--hint); }
+  .day.selected { background: var(--button); color: var(--button-text); font-weight: 700; }
+
+  /* ------------------------------------------------------------ time wheels */
+  .wheels { display: flex; gap: 10px; }
+  .wheel-group { flex: 1; }
+  .wheel-label { font-size: 13px; color: var(--hint); margin-bottom: 6px; text-align: center; }
+  .wheel-pair { display: flex; gap: 6px; position: relative; }
+  /* The highlight band marks which row counts as selected. */
+  .wheel-pair::after {
+    content: ""; position: absolute; left: 0; right: 0;
+    top: calc(var(--item-h) * 2); height: var(--item-h);
+    border-radius: 8px; background: var(--button); opacity: .15;
+    pointer-events: none;
+  }
+  .wheel {
+    flex: 1; height: calc(var(--item-h) * 5);
+    overflow-y: scroll; scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; text-align: center;
+    background: var(--bg); border-radius: 8px;
+  }
+  .wheel::-webkit-scrollbar { display: none; }
+  .wheel .opt {
+    height: var(--item-h); line-height: var(--item-h);
+    scroll-snap-align: center; font-variant-numeric: tabular-nums;
+    font-size: 19px; color: var(--hint); transition: color .12s, transform .12s;
+  }
+  .wheel .opt.on { color: var(--text); font-weight: 700; transform: scale(1.12); }
+  /* Two blank rows top and bottom so the first and last values can centre. */
+  .wheel .pad { height: calc(var(--item-h) * 2); scroll-snap-align: none; }
+
+  .summary { text-align: center; font-size: 15px; padding: 4px 0 0; }
+  .summary .muted { color: var(--hint); font-size: 13px; }
+  .warn { color: #d1453b; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="month-bar">
+    <button id="prev" aria-label="חודש קודם">‹</button>
+    <h2 id="monthName"></h2>
+    <button id="next" aria-label="חודש הבא">›</button>
+  </div>
+  <div class="grid" id="dow"></div>
+  <div class="grid" id="days"></div>
+</div>
+
+<div class="card">
+  <div class="wheels">
+    <div class="wheel-group">
+      <div class="wheel-label">התחלה</div>
+      <div class="wheel-pair">
+        <div class="wheel" id="sh"></div>
+        <div class="wheel" id="sm"></div>
+      </div>
+    </div>
+    <div class="wheel-group">
+      <div class="wheel-label">סיום</div>
+      <div class="wheel-pair">
+        <div class="wheel" id="eh"></div>
+        <div class="wheel" id="em"></div>
+      </div>
+    </div>
+  </div>
+  <div class="summary" id="summary"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const MONTHS = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני",
+                  "יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"];
+  const DOW = ["א","ב","ג","ד","ה","ו","ש"];   // the grid is dir=rtl, so this reads right to left
+
+  const pad2 = n => String(n).padStart(2, "0");
+  const iso = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+  const today = new Date();
+  let view = new Date(today.getFullYear(), today.getMonth(), 1);
+  let selected = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  // Rest days the bot passed in, so חג and שבת are visible before you pick them.
+  const params = new URLSearchParams(location.search);
+  const restDays = new Set((params.get("rest") || "").split(",").filter(Boolean));
+
+  // ------------------------------------------------------------- calendar
+  const dowEl = document.getElementById("dow");
+  DOW.forEach(d => {
+    const cell = document.createElement("div");
+    cell.className = "dow";
+    cell.textContent = d;
+    dowEl.appendChild(cell);
+  });
+
+  function renderMonth() {
+    document.getElementById("monthName").textContent =
+      `${MONTHS[view.getMonth()]} ${view.getFullYear()}`;
+
+    const days = document.getElementById("days");
+    days.textContent = "";
+
+    const first = new Date(view.getFullYear(), view.getMonth(), 1);
+    const last = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
+
+    for (let i = 0; i < first.getDay(); i++) {          // getDay: 0 = Sunday
+      const blank = document.createElement("div");
+      blank.className = "day blank";
+      days.appendChild(blank);
+    }
+    for (let d = 1; d <= last; d++) {
+      const date = new Date(view.getFullYear(), view.getMonth(), d);
+      const key = iso(date);
+      const btn = document.createElement("button");
+      btn.className = "day";
+      btn.textContent = d;
+      if (date.getDay() === 6 || restDays.has(key)) btn.classList.add("rest");
+      if (key === iso(today)) btn.classList.add("today");
+      if (key === iso(selected)) btn.classList.add("selected");
+      btn.addEventListener("click", () => {
+        selected = date;
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        renderMonth();
+        updateSummary();
+      });
+      days.appendChild(btn);
+    }
+  }
+
+  document.getElementById("prev").addEventListener("click", () => {
+    view = new Date(view.getFullYear(), view.getMonth() - 1, 1);
+    renderMonth();
+  });
+  document.getElementById("next").addEventListener("click", () => {
+    view = new Date(view.getFullYear(), view.getMonth() + 1, 1);
+    renderMonth();
+  });
+
+  // ---------------------------------------------------------- time wheels
+  const ITEM = 40;
+
+  function buildWheel(el, values, initial) {
+    el.textContent = "";
+    const top = document.createElement("div"); top.className = "pad"; el.appendChild(top);
+    values.forEach(v => {
+      const row = document.createElement("div");
+      row.className = "opt";
+      row.textContent = pad2(v);
+      el.appendChild(row);
+    });
+    const bottom = document.createElement("div"); bottom.className = "pad"; el.appendChild(bottom);
+
+    el.dataset.values = JSON.stringify(values);
+    const index = Math.max(0, values.indexOf(initial));
+    // Set after layout, or the scroll position is discarded.
+    requestAnimationFrame(() => { el.scrollTop = index * ITEM; markActive(el); });
+
+    let timer = null;
+    el.addEventListener("scroll", () => {
+      markActive(el);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        // Settle exactly on a row: momentum scrolling stops between rows.
+        const i = Math.round(el.scrollTop / ITEM);
+        el.scrollTo({ top: i * ITEM, behavior: "smooth" });
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        updateSummary();
+      }, 120);
+    });
+  }
+
+  function markActive(el) {
+    const i = Math.round(el.scrollTop / ITEM);
+    [...el.querySelectorAll(".opt")].forEach((opt, n) => opt.classList.toggle("on", n === i));
+  }
+
+  function wheelValue(el) {
+    const values = JSON.parse(el.dataset.values);
+    const i = Math.min(values.length - 1, Math.max(0, Math.round(el.scrollTop / ITEM)));
+    return values[i];
+  }
+
+  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+  const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5);
+  const els = {
+    sh: document.getElementById("sh"), sm: document.getElementById("sm"),
+    eh: document.getElementById("eh"), em: document.getElementById("em"),
+  };
+  buildWheel(els.sh, HOURS, 9);
+  buildWheel(els.sm, MINUTES, 0);
+  buildWheel(els.eh, HOURS, 17);
+  buildWheel(els.em, MINUTES, 0);
+
+  // --------------------------------------------------------------- summary
+  function times() {
+    return {
+      start: `${pad2(wheelValue(els.sh))}:${pad2(wheelValue(els.sm))}`,
+      end: `${pad2(wheelValue(els.eh))}:${pad2(wheelValue(els.em))}`,
+    };
+  }
+
+  function updateSummary() {
+    const { start, end } = times();
+    const [a, b] = [start, end].map(t => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    });
+    // An end at or before the start means the shift ran past midnight.
+    let minutes = b - a;
+    let overnight = false;
+    if (minutes <= 0) { minutes += 24 * 60; overnight = true; }
+
+    const hours = (minutes / 60).toFixed(2).replace(/\.?0+$/, "");
+    const dateLabel = selected.toLocaleDateString("he-IL", {
+      weekday: "long", day: "2-digit", month: "2-digit", year: "numeric",
+    });
+
+    document.getElementById("summary").innerHTML =
+      `<div>${dateLabel}</div>` +
+      `<div><b>${start} – ${end}</b> · ${hours} שעות</div>` +
+      (overnight ? `<div class="muted">חוצה חצות — הסיום למחרת</div>` : "");
+
+    if (tg && tg.MainButton) {
+      tg.MainButton.setText(`שמור · ${hours} שעות`);
+      if (!tg.MainButton.isVisible) tg.MainButton.show();
+    }
+  }
+
+  if (tg && tg.MainButton) {
+    tg.MainButton.onClick(() => {
+      const { start, end } = times();
+      tg.sendData(JSON.stringify({ date: iso(selected), start, end }));
+      tg.close();
+    });
+  }
+
+  renderMonth();
+  updateSummary();
+})();
+</script>
+</body>
+</html>

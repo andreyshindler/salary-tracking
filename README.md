@@ -84,11 +84,11 @@ arrangement.
 - **📊 מצב החודש** is the headline screen: earned so far, remaining until the
   ceiling, a progress bar, hours split by rate tier, how many more hours you can
   still work, and the date you would cross at the current pace.
-- **🗓 יומן** is a month grid: tap a date, then send the hours. It is laid out
-  right to left with ראשון on the right, marks days that already have hours
-  (`•`), marks חג (`✡`) so you can see the 200% days before you work them, and
-  brackets today. After each entry it returns to the grid, so several days can
-  be filled in a row.
+- **🗓 יומן** opens the **Mini App** when one is configured: a month calendar
+  with two scrolling time wheels, matching the Telegram theme. Without a public
+  HTTPS address it falls back to an inline month grid — laid out right to left
+  with ראשון on the right, marking days that already have hours (`•`), חג (`✡`)
+  so the 200% days are visible in advance, and today in brackets.
 - **✍️ רישום ידני** takes a typed line — `16:00 21:30`, `אתמול 16:00 21:30`,
   `12/09 16:00 21:30` — the fastest path for a recent day. An end earlier than
   the start is read as an overnight shift.
@@ -122,6 +122,47 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 
 `/start` · `/shift` (toggles start/stop) · `/status` · `/add` · `/calendar` ·
 `/report` · `/settings` · `/undo` · `/help`
+
+## The Mini App
+
+**🗓 יומן** can open a proper calendar inside Telegram: tap a date, spin the
+hour and minute wheels for start and end, and the shift comes straight back as
+a breakdown card. It uses Telegram's own theme colours, so it matches the client
+in light and dark.
+
+It is **off unless you configure it**, because Telegram refuses to open a Mini
+App over anything but HTTPS with a valid certificate. With `WEBAPP_URL` unset,
+🗓 יומן falls back to the inline grid, which needs no infrastructure at all.
+
+To enable it you need a domain pointed at the VPS and a reverse proxy holding
+the certificate. The container serves plain HTTP on port 8080, published on
+`127.0.0.1` so nothing is exposed directly:
+
+```
+WEBAPP_URL=https://bot.example.com
+```
+
+Caddy, for example, needs one line and obtains the certificate itself:
+
+```
+bot.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Then `docker compose up -d` and open 🗓 יומן.
+
+**How the data comes back.** The page returns its result through Telegram's
+`sendData`, not through an API call to the server — so the web server is static
+only, never receives user data, and needs no authentication of its own.
+`sendData` works only from a **reply-keyboard** `web_app` button (Telegram does
+not deliver it from inline buttons), which is why opening the app sends a
+one-shot keyboard that is removed once the data arrives.
+
+The returned JSON is built by a page on your phone, so it is validated rather
+than trusted: shape, date format, `HH:MM` times, and a plausible date range are
+all checked before anything reaches the pricing engine. Overlap rejection and
+the ceiling alert are shared with every other entry path.
 
 ## Access control
 
@@ -286,6 +327,8 @@ salary_bot/
 │   ├── repo.py               # data access, versioned rate/ceiling lookups
 │   ├── parsing.py            # free-text input
 │   └── models.py, db.py, timeutil.py, cities.py
+├── webapp/
+│   └── index.html            # the Mini App: calendar + hour wheels
 └── bot/
     ├── main.py               # wiring
     ├── texts_he.py           # every Hebrew string

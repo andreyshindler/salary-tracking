@@ -22,6 +22,7 @@ from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import month_grid as grid
 from .. import texts_he as T
+from . import webapp
 from .common import clear_awaiting, get_calendar, guard, safe_edit, set_awaiting
 from .shift import MAX_SHIFT_HOURS, _ceiling_alert
 
@@ -67,6 +68,9 @@ async def cb_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     data = update.callback_query.data
     if data == "cal:today":
+        if await webapp.open_app(update, context):
+            await update.callback_query.answer()
+            return
         today = tu.now_local().date()
         year, month = today.year, today.month
     else:
@@ -83,6 +87,10 @@ async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await guard(update, context):
         return
     clear_awaiting(context)
+    # The Mini App is the nicer picker, but it needs a public HTTPS address.
+    # Without one, the inline grid does the same job with no infrastructure.
+    if await webapp.open_app(update, context):
+        return
     today = tu.now_local().date()
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)

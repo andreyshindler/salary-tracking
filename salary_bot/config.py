@@ -28,6 +28,16 @@ class Config:
     allowed_user_ids: frozenset[int]
     db_path: Path
     log_level: str
+    # Public HTTPS address of the Mini App. Telegram refuses to open anything
+    # else, so an empty value simply disables it and the inline calendar is
+    # used instead.
+    webapp_url: str = ""
+    webapp_host: str = "0.0.0.0"
+    webapp_port: int = 8080
+
+    @property
+    def webapp_enabled(self) -> bool:
+        return self.webapp_url.startswith("https://")
 
     @property
     def db_url(self) -> str:
@@ -58,4 +68,7 @@ def load_config() -> Config:
         allowed_user_ids=_parse_ids(os.environ.get("ALLOWED_USER_IDS", "")),
         db_path=db_path,
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        webapp_url=os.environ.get("WEBAPP_URL", "").strip().rstrip("/"),
+        webapp_host=os.environ.get("WEBAPP_HOST", "0.0.0.0"),
+        webapp_port=int(os.environ.get("WEBAPP_PORT", "8080")),
     )

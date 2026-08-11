@@ -11,9 +11,9 @@ from telegram.ext import (
 
 from ..config import load_config
 from ..core import db
-from . import notifications
+from . import notifications, webserver
 from .handlers import (
-    admin, calendar, common, manual, reports, settings, shift, text_input,
+    admin, calendar, common, manual, reports, settings, shift, text_input, webapp,
 )
 
 log = logging.getLogger(__name__)
@@ -36,9 +36,32 @@ async def _post_init(app: Application) -> None:
     me = await app.bot.get_me()
     log.info("Bot @%s is up", me.username)
 
+    config = app.bot_data.get("config")
+    if config is not None and config.webapp_enabled:
+        # Runs in the bot's own loop: one process, one thing to supervise.
+        app.bot_data["webapp_runner"] = await webserver.start(
+            config.webapp_host, config.webapp_port
+        )
+        log.info("Mini App enabled at %s", config.webapp_url)
+    else:
+        log.info("Mini App disabled (WEBAPP_URL unset); using the inline calendar")
+
+
+async def _post_shutdown(app: Application) -> None:
+    runner = app.bot_data.get("webapp_runner")
+    if runner is not None:
+        await runner.cleanup()
+
 
 def build_application(config) -> Application:
-    app = ApplicationBuilder().token(config.bot_token).post_init(_post_init).build()
+    app = (
+        ApplicationBuilder()
+        .token(config.bot_token)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
+    )
+    app.bot_data["config"] = config
 
     # ---- commands
     app.add_handler(CommandHandler("start", common.cmd_start))
@@ -102,6 +125,9 @@ def build_application(config) -> Application:
     app.add_handler(CallbackQueryHandler(admin.cb_list, pattern=r"^acc:list$"))
     app.add_handler(CallbackQueryHandler(admin.cb_show, pattern=r"^acc:show:\d+$"))
     app.add_handler(CallbackQueryHandler(admin.cb_decide, pattern=r"^acc:(ok|no|rev):\d+$"))
+
+    # ---- Mini App results, before the free-text handler
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp.handle_data))
 
     # ---- free text, last so it never shadows a command
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input.route))

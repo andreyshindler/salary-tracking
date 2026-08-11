@@ -34,5 +34,8 @@ USER app
 VOLUME ["/data"]
 ENV DB_PATH=/data/salary.db
 
+# Only listened on when WEBAPP_URL is set; harmless otherwise.
+EXPOSE 8080
+
 # The console script declared in pyproject.toml under [project.scripts].
 CMD ["salary-bot"]
