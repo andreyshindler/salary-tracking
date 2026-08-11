@@ -55,6 +55,28 @@ def parse_hours(text: str) -> float:
     return value
 
 
+def parse_night_window(text: str) -> tuple[int, int]:
+    """Parse "22:00 08:00" into (start, end) minutes from local midnight."""
+    times = TIME_RE.findall(text.strip().replace("-", " "))
+    if len(times) != 2:
+        raise ParseError("שלח שתי שעות, למשל: 22:00 08:00")
+
+    minutes = []
+    for hour, minute in times:
+        hour, minute = int(hour), int(minute)
+        if hour > 23 or minute > 59:
+            raise ParseError("אחת השעות לא תקינה. שלח בפורמט HH:MM.")
+        minutes.append(hour * 60 + minute)
+
+    if minutes[0] == minutes[1]:
+        raise ParseError("שעת ההתחלה והסיום זהות — לא נשאר חלון לילה.")
+    return minutes[0], minutes[1]
+
+
+def format_minutes(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
 def parse_time_of_day(text: str, on_date: dt.date) -> dt.datetime:
     """Parse a bare "HH:MM" into a naive local datetime on a given date."""
     match = TIME_RE.search(text.strip())

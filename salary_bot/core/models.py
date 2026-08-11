@@ -44,8 +44,16 @@ class User(Base):
 
     # Settings live inline: this is a single-user bot, so a separate settings
     # table would be a join for nothing.
-    daily_ot_threshold: Mapped[float] = mapped_column(Float, default=8.0)
+    # Night premium window, in minutes from local midnight. Defaults to
+    # 22:00-08:00. Kept configurable because the hours are an employment term,
+    # not a law.
+    night_start_min: Mapped[int] = mapped_column(Integer, default=22 * 60)
+    night_end_min: Mapped[int] = mapped_column(Integer, default=8 * 60)
+    # Master switch: off means everything is paid at 100%.
     apply_overtime: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Legacy from the earlier hours-based overtime model, which no longer
+    # exists. Retained only so existing databases keep a valid NOT NULL column.
+    daily_ot_threshold: Mapped[float] = mapped_column(Float, default=8.0)
 
     notify_open_shift: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_ceiling: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -129,8 +137,10 @@ class ShiftSegment(Base):
     to_utc: Mapped[dt.datetime] = mapped_column(DateTime)
     hours: Mapped[float] = mapped_column(Float)
     multiplier: Mapped[float] = mapped_column(Float)
-    kind: Mapped[str] = mapped_column(String(16))   # regular | rest
-    tier: Mapped[str] = mapped_column(String(8))    # base | ot1 | ot2
+    kind: Mapped[str] = mapped_column(String(16))   # regular | rest | night
+    # Legacy from the tiered-overtime model; no longer written. Kept so existing
+    # databases, where the column is NOT NULL, still accept inserts.
+    tier: Mapped[str] = mapped_column(String(8), default="")
     reason: Mapped[str] = mapped_column(String(64), default="")
     amount_agorot: Mapped[int] = mapped_column(Integer)
 

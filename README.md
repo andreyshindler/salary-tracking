@@ -4,7 +4,7 @@ A Telegram bot for logging work hours and tracking earnings against a monthly
 tax-exemption ceiling, with Israeli calendar awareness.
 
 You tell it when you started and finished. It prices the shift against your
-hourly rate — splitting it at Shabbat, holiday and overtime boundaries — and
+hourly rate — splitting it at night, Shabbat and holiday boundaries — and
 tells you how much room is left before you reach the ceiling.
 
 The interface is in Hebrew; the code and docs are in English.
@@ -15,17 +15,31 @@ The interface is in Hebrew; the code and docs are in English.
 
 The same hour is worth a different amount depending on when it falls, so each
 shift is cut into segments wherever the rate changes and each piece is priced
-separately:
+separately. There are exactly two rates:
 
-|                     | base | first 2 OT hours | beyond |
-| ------------------- | ---- | ---------------- | ------ |
-| ordinary day        | 100% | 125%             | 150%   |
-| Shabbat / חג        | 150% | 175%             | 200%   |
+| | |
+| ---- | ------------------------------------------------- |
+| 150% | night (22:00–08:00 by default), Shabbat, and חג     |
+| 100% | everything else                                     |
+
+**Shift length never changes the rate.** A twelve-hour day shift is 100%
+throughout — only the clock and the calendar matter, never hours worked.
+
+**Premiums do not stack.** An hour that is both night *and* Shabbat is 150%, not
+200%. 150% is the highest rate that can ever apply.
 
 Rest periods run from **candle lighting to havdalah**, not midnight to midnight,
 so a shift starting Friday afternoon is genuinely split across two rates. The
 boundary depends on your city — Jerusalem lights 40 minutes before sunset,
 Tel Aviv 18 — which is why the city setting is required.
+
+A Saturday evening shift can therefore carry three rates in a row:
+
+```
+• 150% · 18:00–19:20 · 1.33 ש׳ · ₪200     🕯 שבת
+• 100% · 19:20–22:00 · 2.67 ש׳ · ₪266.67
+• 150% · 22:00–23:00 · 1 ש׳ · ₪150        🌙 לילה
+```
 
 Two classifications that are easy to get wrong and are covered by tests:
 
@@ -35,16 +49,14 @@ Two classifications that are easy to get wrong and are covered by tests:
 - **יום העצמאות is a rest day** for pay purposes even though it is not halachic
   yom tov, so the calendar library does not flag it and it is added explicitly.
 
-Overtime accumulates across the whole shift, not per calendar date: a shift
-running 22:00–04:00 is one working day and midnight does not reset the counter.
-All arithmetic is done in UTC, so a shift crossing the DST change bills the
-real number of hours.
+The night window is evaluated in Israel local time, so 22:00 means 22:00 on the
+clock. All other arithmetic is done in UTC, so a shift crossing the DST change
+bills the real number of hours. Midnight is not a rate change: 22:00–04:00 is a
+single 150% stretch, not two.
 
-**Overtime is daily only.** It starts after the daily threshold — 8 hours by
-default, editable in Settings — and there is no weekly cap: a week may run past
-42 hours without any additional premium. This is the arrangement the bot was
-built for. If your terms include a weekly overtime rule, this bot does not
-model it.
+The night hours are configurable in **⚙️ הגדרות → 🌙 שעות לילה** — they are an
+employment term, not a law. Premiums can also be switched off entirely for a
+flat-rate arrangement.
 
 ## The menu
 
@@ -65,8 +77,9 @@ model it.
 - **📈 דוחות** covers the monthly summary, a breakdown by tier, an annual table,
   a forecast, and a CSV export (one row per priced segment, so it can be checked
   line by line).
-- **⚙️ הגדרות** holds the hourly rate, the ceiling, the city, the overtime rules
-  and the notification switches.
+- **⚙️ הגדרות** holds the hourly rate, the ceiling, the city, the night hours
+  and the notification switches, plus **🔄 חשב מחדש** to re-price every stored shift
+  after a rules change.
 
 Every logged shift replies with a breakdown card showing the reasoning rather
 than only a total, with **עריכה / מחיקה** on the card itself:
@@ -234,7 +247,7 @@ DB=/home/komodo/projects/salary-tracking/data/salary.db deploy/backup.sh
 
 The test suite covers the pricing engine against golden cases (Friday evening
 splits, Saturday-night havdalah, Yom Kippur, chol hamoed, midnight crossings,
-the DST change, the overtime tiers), the ceiling arithmetic, the input parser,
+the DST change, the night window), the ceiling arithmetic, the input parser,
 the rendering, and an end-to-end pass over every handler with stub Telegram
 objects. One test walks every button in every keyboard and asserts it routes to
 a registered handler, so a typo in `callback_data` fails the build rather than
@@ -280,8 +293,10 @@ salary_bot/
 - Rest-day boundaries use candle lighting and havdalah, which is the customary
   reading of the 36-hour weekly rest. If your employer computes it differently,
   the numbers will differ.
-- Recorded shifts are **not** re-priced when you change the rate, the city or
-  the overtime rules — by design. Delete and re-enter a shift to re-price it.
+- Recorded shifts are **not** re-priced automatically when you change the rate,
+  the city or the pay rules — stored segments are what makes past reports
+  auditable. Use **⚙️ הגדרות → 🌙 שעות לילה → 🔄 חשב מחדש** to apply new rules
+  to everything already logged.
 - The bot reports **gross** amounts. It does not compute tax withheld.
 
 The ceiling figure and the rate tiers are settings, not tax advice — confirm the

@@ -89,3 +89,18 @@ def test_manual_entry_rejects_bad_input():
         parse_manual_entry("8:00 12:00 16:00", TODAY)  # three times
     with pytest.raises(ParseError):
         parse_manual_entry("31/02 08:00 12:00", TODAY)  # impossible date
+
+
+def test_parse_night_window():
+    from salary_bot.core.parsing import format_minutes, parse_night_window
+
+    assert parse_night_window("22:00 08:00") == (22 * 60, 8 * 60)
+    assert parse_night_window("22:00-08:00") == (22 * 60, 8 * 60)
+    assert parse_night_window("23:30 06:15") == (23 * 60 + 30, 6 * 60 + 15)
+
+    assert format_minutes(22 * 60) == "22:00"
+    assert format_minutes(6 * 60 + 5) == "06:05"
+
+    for bad in ["22:00", "", "25:00 08:00", "22:00 22:00"]:
+        with pytest.raises(ParseError):
+            parse_night_window(bad)

@@ -83,10 +83,11 @@ def build_application(config) -> Application:
     app.add_handler(CallbackQueryHandler(settings.cb_set_city, pattern=r"^setcity:"))
     app.add_handler(CallbackQueryHandler(settings.cb_overtime_menu, pattern=r"^set:ot$"))
     app.add_handler(CallbackQueryHandler(settings.cb_toggle_overtime, pattern=r"^set:ottoggle$"))
-    app.add_handler(CallbackQueryHandler(settings.cb_ask_ot_threshold, pattern=r"^set:otthr$"))
+    app.add_handler(CallbackQueryHandler(settings.cb_ask_night_window, pattern=r"^set:otthr$"))
     app.add_handler(CallbackQueryHandler(settings.cb_notifications, pattern=r"^set:notif$"))
     app.add_handler(CallbackQueryHandler(settings.cb_toggle_notification, pattern=r"^notif:"))
     app.add_handler(CallbackQueryHandler(settings.cb_backup, pattern=r"^set:backup$"))
+    app.add_handler(CallbackQueryHandler(settings.cb_recalculate, pattern=r"^set:recalc$"))
 
     # ---- access control (admin only; every handler re-checks)
     app.add_handler(CallbackQueryHandler(admin.cb_list, pattern=r"^acc:list$"))

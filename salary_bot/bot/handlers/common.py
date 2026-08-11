@@ -13,6 +13,7 @@ from ...config import Config
 from ...core import access, db, repo
 from ...core.calendar_service import CalendarService
 from ...core.cities import get_city
+from ...core.parsing import format_minutes
 from .. import keyboards as kb
 from .. import texts_he as T
 
@@ -189,8 +190,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
-        threshold = f"{user.daily_ot_threshold:g}"
-    text = T.HELP.format(thr=threshold)
+        night = f"{format_minutes(user.night_start_min)}–{format_minutes(user.night_end_min)}"
+    text = T.HELP.format(night=night)
     if update.callback_query:
         await update.callback_query.answer()
         await safe_edit(update.callback_query, text, kb.back_only())

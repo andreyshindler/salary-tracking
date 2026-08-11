@@ -69,7 +69,7 @@ async def cb_tier_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(fmt.rtl(T.NO_SHIFTS_YET))
         else:
             for tier in status.tiers:
-                label = "שבת/חג" if tier.kind == "rest" else "רגיל"
+                label = fmt.kind_label(tier.kind)
                 lines.append(
                     fmt.rtl(f"• <b>{fmt.fmt_pct(tier.multiplier)}</b> ({label}) · "
                             f"{fmt.fmt_hours(tier.hours)} שעות · {fmt.fmt_money(tier.agorot)}")
@@ -143,7 +143,7 @@ async def cb_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         tu.to_local(seg.to_utc).strftime("%H:%M"),
                         f"{seg.hours:.2f}",
                         fmt.fmt_pct(seg.multiplier),
-                        "שבת/חג" if seg.kind == "rest" else "רגיל",
+                        fmt.kind_label(seg.kind),
                         f"{seg.amount_agorot / 100:.2f}",
                     ])
         writer.writerow([])

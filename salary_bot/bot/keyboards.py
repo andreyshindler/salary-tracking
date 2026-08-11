@@ -130,11 +130,12 @@ def city_picker(current: str) -> Markup:
     return Markup(rows)
 
 
-def overtime_menu(apply_overtime: bool, threshold: float) -> Markup:
-    toggle_label = "🔕 כבה חישוב שעות נוספות" if apply_overtime else "🔔 הפעל חישוב שעות נוספות"
+def overtime_menu(apply_overtime: bool, night_label: str) -> Markup:
+    toggle_label = "🔕 כבה חישוב תוספות" if apply_overtime else "🔔 הפעל חישוב תוספות"
     rows = [[Btn(toggle_label, callback_data="set:ottoggle")]]
     if apply_overtime:
-        rows.append([Btn(f"⏱ סף יומי: {threshold:g} שעות", callback_data="set:otthr")])
+        rows.append([Btn(f"🌙 שעות לילה: {night_label}", callback_data="set:otthr")])
+    rows.append([Btn(T.BTN_RECALC, callback_data="set:recalc")])
     rows.append([Btn(T.BTN_BACK, callback_data="set:menu")])
     return Markup(rows)
 

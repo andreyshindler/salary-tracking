@@ -122,9 +122,10 @@ def test_overlapping_shifts_are_detected(session, user, cal):
 def test_deleting_a_shift_removes_its_segments_and_total(session, user, cal):
     from salary_bot.core.models import ShiftSegment
 
-    shift = _add(session, user, cal, local(2026, 6, 9, 8), local(2026, 6, 9, 20))
+    # 20:00-02:00 crosses the 22:00 night boundary, so it stores two segments.
+    shift = _add(session, user, cal, local(2026, 6, 9, 20), local(2026, 6, 10, 2))
     shift_id = shift.id
-    assert session.query(ShiftSegment).filter_by(shift_id=shift_id).count() == 3
+    assert session.query(ShiftSegment).filter_by(shift_id=shift_id).count() == 2
 
     repo.delete_shift(session, shift)
     session.flush()
@@ -151,3 +152,43 @@ def test_projection_is_absent_when_the_pace_would_not_reach_the_ceiling(session,
     _add(session, user, cal, local(2026, 6, 1, 8), local(2026, 6, 1, 10))  # 2h all month
     st = ceiling_mod.month_status(session, user, 2026, 6)
     assert st.projected_crossing_date(today=dt.date(2026, 6, 10)) is None
+
+
+def test_reprice_all_applies_the_current_rules(session, user, cal):
+    """Segments are stored, so a rules change leaves old shifts on old numbers.
+    That is deliberate for auditability — but when the rules were wrong, the
+    user needs a correction."""
+    shift = _add(session, user, cal, local(2026, 6, 9, 20), local(2026, 6, 10, 2))
+    assert shift.total_agorot == round(2 * RATE + 4 * 1.5 * RATE)  # 2h day + 4h night
+
+    # Simulate a flat-rate arrangement being switched on after the fact.
+    user.apply_overtime = False
+    session.flush()
+
+    count = repo.reprice_all(session, user, cal)
+    assert count == 1
+
+    session.refresh(shift)
+    assert shift.total_agorot == 6 * RATE, "the night premium should be gone"
+    assert len(shift.segments) == 1
+    assert ceiling_mod.month_status(session, user, 2026, 6).earned_agorot == 6 * RATE
+
+
+def test_reprice_all_follows_a_changed_night_window(session, user, cal):
+    shift = _add(session, user, cal, local(2026, 6, 9, 20), local(2026, 6, 10, 2))
+    assert shift.total_agorot == round(2 * RATE + 4 * 1.5 * RATE)
+
+    user.night_start_min = 23 * 60      # night now starts an hour later
+    session.flush()
+    repo.reprice_all(session, user, cal)
+
+    session.refresh(shift)
+    assert shift.total_agorot == round(3 * RATE + 3 * 1.5 * RATE)
+
+
+def test_reprice_all_ignores_an_open_shift(session, user, cal):
+    _add(session, user, cal, local(2026, 6, 9, 9), local(2026, 6, 9, 15))
+    repo.start_shift(session, user.id, tu.to_utc_naive(local(2026, 6, 11, 9)))
+    session.flush()
+
+    assert repo.reprice_all(session, user, cal) == 1  # the open one is skipped

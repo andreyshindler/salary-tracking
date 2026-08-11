@@ -114,8 +114,9 @@ def price_and_store(s: Session, user: User, shift: Shift, calendar: CalendarServ
         end=tu.to_aware_utc(shift.end_utc),
         hourly_agorot=rate,
         calendar=calendar,
-        daily_ot_threshold=user.daily_ot_threshold,
-        apply_overtime=user.apply_overtime,
+        night_start_min=user.night_start_min,
+        night_end_min=user.night_end_min,
+        apply_premiums=user.apply_overtime,
     )
 
     # Mutate the relationship rather than inserting rows with a raw shift_id:
@@ -133,7 +134,6 @@ def price_and_store(s: Session, user: User, shift: Shift, calendar: CalendarServ
                 hours=seg.hours,
                 multiplier=seg.multiplier,
                 kind=seg.kind,
-                tier=seg.tier,
                 reason=seg.reason,
                 amount_agorot=seg.amount_agorot,
             )
@@ -167,6 +167,24 @@ def add_manual_shift(
     s.add(shift)
     s.flush()
     return price_and_store(s, user, shift, calendar)
+
+
+def reprice_all(s: Session, user: User, calendar: CalendarService) -> int:
+    """Re-price every closed shift under the current rules; returns the count.
+
+    Segments are stored rather than recomputed on read, which is what makes
+    reports auditable — but it also means a change to the pay rules leaves old
+    shifts carrying the totals they were priced at. When the rules themselves
+    were wrong, that is a correction the user has to be able to apply.
+    """
+    shifts = list(
+        s.execute(
+            select(Shift).where(Shift.user_id == user.id, Shift.end_utc.is_not(None))
+        ).scalars()
+    )
+    for shift in shifts:
+        price_and_store(s, user, shift, calendar)
+    return len(shifts)
 
 
 def shifts_in_month(s: Session, user_id: int, year: int, month: int) -> list[Shift]:

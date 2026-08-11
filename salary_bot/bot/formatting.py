@@ -41,6 +41,13 @@ def fmt_pct(multiplier: float) -> str:
     return f"{round(multiplier * 100)}%"
 
 
+KIND_LABELS_HE = {"regular": "רגיל", "rest": "שבת/חג", "night": "לילה"}
+
+
+def kind_label(kind: str) -> str:
+    return KIND_LABELS_HE.get(kind, kind)
+
+
 def day_name(day: dt.date) -> str:
     return DAY_NAMES_HE[day.weekday()]
 
@@ -76,13 +83,10 @@ def shift_breakdown(shift: Shift, calendar: CalendarService) -> str:
             fmt_money(seg.amount_agorot),
         ]
         line = " · ".join(pieces)
-        marks = []
         if seg.kind == "rest" and seg.reason:
-            marks.append(f"🕯 {seg.reason}")
-        if seg.tier != "base":
-            marks.append("ש״נ")
-        if marks:
-            line += "  " + " ".join(marks)
+            line += f"  🕯 {seg.reason}"
+        elif seg.kind == "night":
+            line += f"  🌙 {seg.reason}"
         lines.append(rtl(line))
     return "\n".join(lines)
 
@@ -151,7 +155,7 @@ def status_card(status: MonthStatus) -> str:
         lines.append("")
         lines.append(rtl("<b>פילוח לפי תעריף:</b>"))
         for tier in status.tiers:
-            label = "שבת/חג" if tier.kind == "rest" else "רגיל"
+            label = kind_label(tier.kind)
             lines.append(
                 rtl(f"• {fmt_pct(tier.multiplier)} ({label}) · "
                     f"{fmt_hours(tier.hours)} ש׳ · {fmt_money(tier.agorot)}")
@@ -196,10 +200,12 @@ def shift_line(shift: Shift, calendar: CalendarService) -> str:
     start_local = tu.to_local(shift.start_utc)
     end_local = tu.to_local(shift.end_utc)
     hours = sum(s.hours for s in shift.segments)
-    has_premium = any(s.multiplier > 1.0 for s in shift.segments)
-    mark = " 🕯" if any(s.kind == "rest" for s in shift.segments) else ""
-    if has_premium and not mark:
-        mark = " ⏱"
+    if any(s.kind == "rest" for s in shift.segments):
+        mark = " 🕯"
+    elif any(s.kind == "night" for s in shift.segments):
+        mark = " 🌙"
+    else:
+        mark = ""
     return rtl(
         f"{start_local.strftime('%d.%m')} ({day_name(start_local.date())}) · "
         f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')} · "

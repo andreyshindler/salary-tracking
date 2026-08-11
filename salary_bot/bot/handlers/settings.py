@@ -11,9 +11,12 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from ...core import access, db, repo
+from ...core import ceiling as ceiling_mod
 from ...core import timeutil as tu
 from ...core.cities import get_city
-from ...core.parsing import ParseError, parse_amount, parse_hours
+from ...core.parsing import (
+    ParseError, format_minutes, parse_amount, parse_night_window,
+)
 from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
@@ -40,15 +43,15 @@ def _settings_markup(tg_user_id: int):
     return kb.settings_menu(admin, pending)
 
 
+def _night_label(user) -> str:
+    return f"{format_minutes(user.night_start_min)}–{format_minutes(user.night_end_min)}"
+
+
 def _summary(s, user) -> str:
     today = tu.now_local().date()
     rate = repo.effective_rate(s, user.id, today)
     ceiling_agorot = repo.effective_ceiling(s, user.id, today)
-    ot = (
-        T.OT_ON.format(thr=f"{user.daily_ot_threshold:g}")
-        if user.apply_overtime
-        else T.OT_OFF
-    )
+    ot = T.OT_ON.format(night=_night_label(user)) if user.apply_overtime else T.OT_OFF
     body = T.SETTINGS_SUMMARY.format(
         rate=f"{fmt.fmt_money(rate)} לשעה" if rate > 0 else "לא הוגדר",
         ceiling=fmt.fmt_money(ceiling_agorot),
@@ -84,11 +87,11 @@ async def cb_ask_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, T.ASK_CEILING, kb.cancel_only())
 
 
-async def cb_ask_ot_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cb_ask_night_window(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await guard(update, context):
         return
-    set_awaiting(context, "ot_threshold")
-    await _reply(update, T.ASK_OT_THRESHOLD, kb.cancel_only())
+    set_awaiting(context, "night_window")
+    await _reply(update, T.ASK_NIGHT_WINDOW, kb.cancel_only())
 
 
 async def handle_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -137,20 +140,23 @@ async def handle_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
-async def handle_ot_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_night_window(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        hours = parse_hours(update.message.text)
+        start_min, end_min = parse_night_window(update.message.text)
     except ParseError as exc:
         await update.message.reply_text(str(exc), reply_markup=kb.cancel_only())
         return
 
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
-        user.daily_ot_threshold = hours
+        user.night_start_min = start_min
+        user.night_end_min = end_min
+        s.flush()
+        label = _night_label(user)
 
     clear_awaiting(context)
     await update.message.reply_text(
-        T.OT_THRESHOLD_SAVED.format(thr=f"{hours:g}"),
+        T.NIGHT_WINDOW_SAVED.format(night=label) + "\n\n" + T.RECALC_HINT,
         reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
@@ -178,21 +184,27 @@ async def cb_set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _reply(update, text, _settings_markup(update.effective_user.id))
 
 
-# ------------------------------------------------------------------ overtime
+# ------------------------------------------------------- premiums / night hours
+
+def _premium_text(user) -> str:
+    return fmt.rtl(
+        "🌙 <b>תוספות שכר</b>\n\n"
+        "יש שני תעריפים בלבד:\n"
+        f"‏• <b>150%</b> — לילה ({_night_label(user)}), שבת וחג\n"
+        "‏• <b>100%</b> — כל השאר\n\n"
+        "אורך המשמרת לא משנה את התעריף. שעה שהיא גם לילה וגם שבת "
+        "נשארת 150% — התוספות לא מצטברות.\n\n"
+        "אם השכר שלך משולם בתעריף אחיד, אפשר לכבות את החישוב."
+    )
+
 
 async def cb_overtime_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await guard(update, context):
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
-        apply_ot, threshold = user.apply_overtime, user.daily_ot_threshold
-    text = fmt.rtl(
-        "⏱ <b>כללי שעות נוספות</b>\n\n"
-        "ביום רגיל: 100% · אחרי הסף 125% · ומעבר לכך 150%\n"
-        "בשבת וחג: 150% · אחרי הסף 175% · ומעבר לכך 200%\n\n"
-        "אם השכר שלך משולם בתעריף אחיד, אפשר לכבות את החישוב."
-    )
-    await _reply(update, text, kb.overtime_menu(apply_ot, threshold))
+        text, apply_ot, label = _premium_text(user), user.apply_overtime, _night_label(user)
+    await _reply(update, text, kb.overtime_menu(apply_ot, label))
 
 
 async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -202,10 +214,32 @@ async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user = db.get_or_create_user(s, update.effective_user.id)
         user.apply_overtime = not user.apply_overtime
         s.flush()
-        now_on, threshold = user.apply_overtime, user.daily_ot_threshold
-    text = T.OT_TOGGLED_ON if now_on else T.OT_TOGGLED_OFF
-    text += "\n\n" + fmt.rtl("שים לב: משמרות שכבר נרשמו לא מחושבות מחדש.")
-    await _reply(update, text, kb.overtime_menu(now_on, threshold))
+        now_on, label = user.apply_overtime, _night_label(user)
+    text = (T.OT_TOGGLED_ON if now_on else T.OT_TOGGLED_OFF) + "\n\n" + T.RECALC_HINT
+    await _reply(update, text, kb.overtime_menu(now_on, label))
+
+
+async def cb_recalculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Re-price every stored shift under the current rules.
+
+    Stored segments are what makes reports auditable, but it means a rules
+    change leaves old shifts on the old numbers — and those numbers feed the
+    ceiling. This is the correction.
+    """
+    if not await guard(update, context):
+        return
+
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, update.effective_user.id)
+        calendar = common.get_calendar(user.city)
+        count = repo.reprice_all(s, user, calendar)
+        if count == 0:
+            await _reply(update, T.RECALC_NONE, _settings_markup(update.effective_user.id))
+            return
+        status = ceiling_mod.current_month_status(s, user)
+        text = T.RECALC_DONE.format(count=count, ceiling=fmt.ceiling_block(status))
+
+    await _reply(update, text, _settings_markup(update.effective_user.id))
 
 
 # ------------------------------------------------------------- notifications

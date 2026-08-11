@@ -67,12 +67,14 @@ async def test_start_command_renders_the_main_menu(bot_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_help_renders_with_the_overtime_threshold(bot_env, ctx):
+async def test_help_renders_the_two_rate_model(bot_env, ctx):
     update = FakeUpdate(text="/help")
     await common.cmd_help(update, ctx)
     text = last_output(update)
     assert "חול המועד" in text
-    assert "125%" in text and "175%" in text
+    assert "150%" in text and "100%" in text
+    assert "22:00–08:00" in text          # the night window, from settings
+    assert "125%" not in text             # the old tiered model is gone
 
 
 @pytest.mark.asyncio
@@ -213,7 +215,7 @@ async def test_reports_screens_all_render(bot_env, ctx):
 @pytest.mark.asyncio
 async def test_csv_export_produces_a_document(bot_env, ctx):
     ctx.user_data["awaiting"] = "manual"
-    await manual.handle_text(FakeUpdate(text="10/06/2026 08:00 20:00"), ctx)
+    await manual.handle_text(FakeUpdate(text="10/06/2026 20:00 02:00"), ctx)
 
     update = FakeUpdate(callback="rep:csv")
     await reports.cb_export_csv(update, ctx)
@@ -222,7 +224,9 @@ async def test_csv_export_produces_a_document(bot_env, ctx):
     payload = ctx.bot.documents[0]["document"].input_file_content
     text = payload.decode("utf-8-sig")
     assert "מזהה משמרת" in text
-    assert "125%" in text and "150%" in text   # the overtime tiers are itemised
+    # One row per priced segment, so both rates are itemised separately.
+    assert "100%" in text and "150%" in text
+    assert "לילה" in text
 
 
 @pytest.mark.asyncio
@@ -381,3 +385,58 @@ async def test_backdated_start_time(bot_env, ctx):
         open_shift = repo.open_shift(s, user.id)
         assert open_shift is not None
         assert tu.to_local(open_shift.start_utc).strftime("%H:%M") == "08:30"
+
+
+@pytest.mark.asyncio
+async def test_night_window_can_be_changed_and_shifts_recalculated(bot_env, ctx):
+    """The whole point of recalculation: correcting shifts already logged under
+    rules that have since changed."""
+    ctx.user_data["awaiting"] = "manual"
+    await manual.handle_text(FakeUpdate(text="10/06/2026 20:00 02:00"), ctx)
+
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        before = repo.recent_shifts(s, user.id)[0].total_agorot
+    assert before == round(2 * RATE + 4 * 1.5 * RATE)   # 2h day + 4h night
+
+    ask = FakeUpdate(callback="set:otthr")
+    await settings.cb_ask_night_window(ask, ctx)
+    assert ctx.user_data["awaiting"] == "night_window"
+
+    saved = FakeUpdate(text="23:00 06:00")
+    await settings.handle_night_window(saved, ctx)
+    assert "23:00" in last_output(saved)
+
+    # Stored shifts keep the old numbers until explicitly recalculated.
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        assert repo.recent_shifts(s, user.id)[0].total_agorot == before
+
+    recalc = FakeUpdate(callback="set:recalc")
+    await settings.cb_recalculate(recalc, ctx)
+    assert "1" in last_output(recalc)
+
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        assert repo.recent_shifts(s, user.id)[0].total_agorot == round(
+            3 * RATE + 3 * 1.5 * RATE
+        )
+
+
+@pytest.mark.asyncio
+async def test_recalculate_with_no_shifts_says_so(bot_env, ctx):
+    update = FakeUpdate(callback="set:recalc")
+    await settings.cb_recalculate(update, ctx)
+    assert "אין משמרות" in last_output(update)
+
+
+@pytest.mark.asyncio
+async def test_a_night_shift_card_shows_the_night_premium(bot_env, ctx):
+    ctx.user_data["awaiting"] = "manual"
+    update = FakeUpdate(text="10/06/2026 20:00 02:00")
+    await manual.handle_text(update, ctx)
+
+    card = last_output(update)
+    assert "🌙" in card
+    assert "100%" in card and "150%" in card
+    assert "22:00" in card          # the split point

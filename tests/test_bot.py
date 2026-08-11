@@ -64,11 +64,12 @@ def test_status_card_renders_with_no_shifts(session, user):
 
 
 def test_status_card_lists_tiers(session, user, add_shift):
-    add_shift(local(2026, 6, 9, 8), local(2026, 6, 9, 20))  # 12h -> three tiers
+    # 20:00-02:00 spans the 22:00 night boundary, so both rates appear.
+    add_shift(local(2026, 6, 9, 20), local(2026, 6, 10, 2))
     status = ceiling_mod.month_status(session, user, 2026, 6)
     card = fmt.status_card(status)
-    for pct in ("100%", "125%", "150%"):
-        assert pct in card
+    for expected in ("100%", "150%", "רגיל", "לילה"):
+        assert expected in card
 
 
 def test_forecast_card_handles_the_no_rate_case(session, user, add_shift):
@@ -121,7 +122,7 @@ def _all_callback_data() -> set[str]:
         kb.access_request(7), kb.user_detail(7, is_self=False),
         kb.user_detail(7, is_self=True),
         kb.city_picker("tel_aviv"),
-        kb.overtime_menu(True, 8.0), kb.overtime_menu(False, 8.0),
+        kb.overtime_menu(True, "22:00–08:00"), kb.overtime_menu(False, "22:00–08:00"),
         kb.notifications_menu(True, False, True),
         kb.onboarding(True), kb.onboarding(False),
     ]

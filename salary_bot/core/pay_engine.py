@@ -1,42 +1,52 @@
 """Pricing a shift into rate segments.
 
 This is the correctness-critical module. A shift is not ``hours × rate``: the
-same hour is worth a different amount depending on when it falls, so the shift
-is cut into segments at every point where the rate changes, and each segment is
+same hour is worth a different amount depending on *when* it falls, so the shift
+is cut into segments at every point where the rate changes and each segment is
 priced on its own.
 
-Rate table (Israeli hourly practice):
+There are exactly **two rates**:
 
-===============  ======  ======  ======
-                 base    +2h OT  beyond
-===============  ======  ======  ======
-ordinary day     100%    125%    150%
-rest day / chag  150%    175%    200%
-===============  ======  ======  ======
+======================================  ======
+night (22:00-08:00), Shabbat, or חג     150%
+everything else                         100%
+======================================  ======
 
-Two structural choices:
+Three consequences worth stating, because each is a decision rather than an
+accident:
 
-* Overtime accumulates **across the whole shift**, not per calendar date. A
-  shift running 22:00-04:00 is one working day, and its ninth hour is overtime
-  regardless of midnight falling in the middle. Consequently midnight is not a
-  segment boundary — only rate changes are, which also keeps the breakdown card
-  readable.
-* All arithmetic is in **aware UTC**. A shift crossing the DST change is then
-  automatically the right number of real hours.
+* **There is no overtime by hours worked.** A twelve-hour day shift is 100%
+  throughout. Length of shift never changes the rate — only the clock and the
+  calendar do.
+* **Premiums do not stack.** An hour that is both night *and* Shabbat is 150%,
+  not 200%. There are only two rates, so the highest that can ever apply is
+  150%.
+* All arithmetic is in **aware UTC**, and the night window is evaluated in
+  Israel local time. A shift crossing the DST change is therefore billed the
+  real number of hours, while 22:00 still means 22:00 on the clock.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
 
+from ..config import ISRAEL_TZ
 from .calendar_service import CalendarService
 
 EPS = 1e-9
 
-MULTIPLIERS: dict[str, dict[str, float]] = {
-    "regular": {"base": 1.0, "ot1": 1.25, "ot2": 1.5},
-    "rest": {"base": 1.5, "ot1": 1.75, "ot2": 2.0},
-}
+BASE_MULTIPLIER = 1.0
+PREMIUM_MULTIPLIER = 1.5
+
+# Minutes from local midnight. 22:00 and 08:00.
+DEFAULT_NIGHT_START_MIN = 22 * 60
+DEFAULT_NIGHT_END_MIN = 8 * 60
+
+NIGHT_LABEL = "לילה"
+
+KIND_REGULAR = "regular"
+KIND_REST = "rest"
+KIND_NIGHT = "night"
 
 
 @dataclass(frozen=True)
@@ -45,9 +55,8 @@ class PricedSegment:
     end: dt.datetime            # aware UTC
     hours: float
     multiplier: float
-    kind: str                   # regular | rest
-    tier: str                   # base | ot1 | ot2
-    reason: str                 # Hebrew label, e.g. "שבת"
+    kind: str                   # regular | rest | night
+    reason: str                 # Hebrew label, e.g. "שבת" or "לילה"
     amount_agorot: int
 
 
@@ -60,16 +69,78 @@ class PricedShift:
     segments: list[PricedSegment]
 
 
-def _tier_at(cum_hours: float, t1: float, t2: float, apply_overtime: bool) -> tuple[str, float]:
-    """Which tier the next hour falls into, and the cumulative-hours limit
-    at which that tier ends."""
-    if not apply_overtime:
-        return "base", float("inf")
-    if cum_hours < t1 - EPS:
-        return "base", t1
-    if cum_hours < t2 - EPS:
-        return "ot1", t2
-    return "ot2", float("inf")
+def _minutes_of_day(moment_utc: dt.datetime) -> float:
+    local = moment_utc.astimezone(ISRAEL_TZ)
+    return local.hour * 60 + local.minute + local.second / 60
+
+
+def is_night(
+    moment_utc: dt.datetime,
+    night_start_min: int = DEFAULT_NIGHT_START_MIN,
+    night_end_min: int = DEFAULT_NIGHT_END_MIN,
+) -> bool:
+    """Whether an instant falls in the night window, in Israel local time."""
+    if night_start_min == night_end_min:
+        return False  # an empty window disables the premium
+    minutes = _minutes_of_day(moment_utc)
+    if night_start_min > night_end_min:
+        # The usual case: the window wraps midnight (22:00 -> 08:00).
+        return minutes >= night_start_min or minutes < night_end_min
+    return night_start_min <= minutes < night_end_min
+
+
+def _night_boundaries(
+    start: dt.datetime, end: dt.datetime, night_start_min: int, night_end_min: int
+) -> list[dt.datetime]:
+    """Every night-window edge in the span, as aware UTC.
+
+    Built from *local* wall-clock times and then converted, so the boundary sits
+    at 22:00 on the clock regardless of the UTC offset in force that day.
+    """
+    if night_start_min == night_end_min:
+        return []
+
+    day = start.astimezone(ISRAEL_TZ).date() - dt.timedelta(days=1)
+    last = end.astimezone(ISRAEL_TZ).date() + dt.timedelta(days=1)
+
+    edges: list[dt.datetime] = []
+    while day <= last:
+        midnight = dt.datetime.combine(day, dt.time())
+        for minutes in {night_start_min, night_end_min}:
+            local = (midnight + dt.timedelta(minutes=minutes)).replace(tzinfo=ISRAEL_TZ)
+            edges.append(local.astimezone(dt.timezone.utc))
+        day += dt.timedelta(days=1)
+    return edges
+
+
+def _merge_adjacent(segments: list[PricedSegment]) -> list[PricedSegment]:
+    """Collapse touching segments priced identically.
+
+    A night boundary inside Shabbat would otherwise split one 150% stretch into
+    two identical-looking rows on the breakdown card, which reads as a mistake.
+    """
+    merged: list[PricedSegment] = []
+    for seg in segments:
+        prev = merged[-1] if merged else None
+        if (
+            prev is not None
+            and prev.end == seg.start
+            and prev.kind == seg.kind
+            and prev.multiplier == seg.multiplier
+            and prev.reason == seg.reason
+        ):
+            merged[-1] = PricedSegment(
+                start=prev.start,
+                end=seg.end,
+                hours=prev.hours + seg.hours,
+                multiplier=prev.multiplier,
+                kind=prev.kind,
+                reason=prev.reason,
+                amount_agorot=prev.amount_agorot + seg.amount_agorot,
+            )
+        else:
+            merged.append(seg)
+    return merged
 
 
 def price_shift(
@@ -77,9 +148,9 @@ def price_shift(
     end: dt.datetime,
     hourly_agorot: int,
     calendar: CalendarService,
-    daily_ot_threshold: float = 8.0,
-    ot1_span: float = 2.0,
-    apply_overtime: bool = True,
+    night_start_min: int = DEFAULT_NIGHT_START_MIN,
+    night_end_min: int = DEFAULT_NIGHT_END_MIN,
+    apply_premiums: bool = True,
 ) -> PricedShift:
     """Split a shift at every rate change and price each piece.
 
@@ -93,63 +164,52 @@ def price_shift(
     if end <= start:
         raise ValueError("shift end must be after its start")
 
-    # 1. Boundaries: shift edges, plus every rest-block edge falling inside.
-    blocks = calendar.rest_blocks_overlapping(start, end)
+    blocks = calendar.rest_blocks_overlapping(start, end) if apply_premiums else []
+
+    # 1. Boundaries: the shift edges, every rest-block edge, and every night
+    #    edge falling strictly inside.
     points = {start, end}
-    for block in blocks:
-        for edge in (block.start, block.end):
-            if start < edge < end:
-                points.add(edge)
+    if apply_premiums:
+        edges = [e for b in blocks for e in (b.start, b.end)]
+        edges += _night_boundaries(start, end, night_start_min, night_end_min)
+        points.update(e for e in edges if start < e < end)
     ordered = sorted(points)
 
-    t1 = daily_ot_threshold
-    t2 = daily_ot_threshold + ot1_span
-
+    # 2. Classify and price each piece. Rest beats night only for the label;
+    #    both carry the same multiplier, so nothing stacks.
     segments: list[PricedSegment] = []
-    cum_hours = 0.0
-
-    # 2. Walk each interval, subdividing again wherever an overtime tier ends.
     for left, right in zip(ordered, ordered[1:]):
         midpoint = left + (right - left) / 2
-        kind = "regular"
-        reason = ""
-        for block in blocks:
-            if block.contains(midpoint):
-                kind, reason = "rest", block.label
-                break
 
-        cursor = left
-        while (right - cursor).total_seconds() > EPS:
-            remaining = (right - cursor).total_seconds() / 3600.0
-            tier, limit = _tier_at(cum_hours, t1, t2, apply_overtime)
-            available = float("inf") if limit == float("inf") else limit - cum_hours
-            take = min(remaining, available)
+        kind, reason = KIND_REGULAR, ""
+        if apply_premiums:
+            block = next((b for b in blocks if b.contains(midpoint)), None)
+            if block is not None:
+                kind, reason = KIND_REST, block.label
+            elif is_night(midpoint, night_start_min, night_end_min):
+                kind, reason = KIND_NIGHT, NIGHT_LABEL
 
-            nxt = cursor + dt.timedelta(hours=take)
-            if nxt > right:
-                nxt = right
-            take = (nxt - cursor).total_seconds() / 3600.0
-
-            multiplier = MULTIPLIERS[kind][tier]
-            segments.append(
-                PricedSegment(
-                    start=cursor,
-                    end=nxt,
-                    hours=take,
-                    multiplier=multiplier,
-                    kind=kind,
-                    tier=tier,
-                    reason=reason,
-                    amount_agorot=round(take * multiplier * hourly_agorot),
-                )
+        multiplier = BASE_MULTIPLIER if kind == KIND_REGULAR else PREMIUM_MULTIPLIER
+        hours = (right - left).total_seconds() / 3600.0
+        segments.append(
+            PricedSegment(
+                start=left,
+                end=right,
+                hours=hours,
+                multiplier=multiplier,
+                kind=kind,
+                reason=reason,
+                amount_agorot=round(hours * multiplier * hourly_agorot),
             )
-            cum_hours += take
-            cursor = nxt
+        )
+
+    segments = _merge_adjacent(segments)
+    total_hours = sum(s.hours for s in segments)
 
     return PricedShift(
         start=start,
         end=end,
-        total_hours=round(cum_hours, 6),
+        total_hours=round(total_hours, 6),
         total_agorot=sum(s.amount_agorot for s in segments),
         segments=segments,
     )

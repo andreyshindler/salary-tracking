@@ -48,6 +48,8 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("access_notified", "BOOLEAN NOT NULL DEFAULT 0"),
         ("tg_username", "VARCHAR(64)"),
         ("tg_first_name", "VARCHAR(128)"),
+        ("night_start_min", "INTEGER NOT NULL DEFAULT 1320"),  # 22:00
+        ("night_end_min", "INTEGER NOT NULL DEFAULT 480"),     # 08:00
     ],
 }
 
