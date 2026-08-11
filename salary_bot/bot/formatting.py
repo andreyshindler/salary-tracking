@@ -136,7 +136,6 @@ def shift_breakdown(shift: Shift, calendar: CalendarService) -> str:
 def shift_card(shift: Shift, calendar: CalendarService, status: MonthStatus | None = None,
                title: str = "✅ נרשמה משמרת") -> str:
     start_local = tu.to_local(shift.start_utc)
-    end_local = tu.to_local(shift.end_utc)
     total_hours = sum(s.hours for s in shift.segments)
 
     holiday = calendar.holiday_label(start_local.date())

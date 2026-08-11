@@ -76,7 +76,7 @@ arrangement.
 
 ```
 ▶️ התחלת משמרת   /   ⏹ סיום משמרת      ✍️ רישום ידני
-📊 מצב החודש
+🗓 יומן                                  📊 מצב החודש
 🗓 המשמרות שלי                          📈 דוחות
 ⚙️ הגדרות                                ❓ עזרה
 ```
@@ -84,10 +84,14 @@ arrangement.
 - **📊 מצב החודש** is the headline screen: earned so far, remaining until the
   ceiling, a progress bar, hours split by rate tier, how many more hours you can
   still work, and the date you would cross at the current pace.
+- **🗓 יומן** is a month grid: tap a date, then send the hours. It is laid out
+  right to left with ראשון on the right, marks days that already have hours
+  (`•`), marks חג (`✡`) so you can see the 200% days before you work them, and
+  brackets today. After each entry it returns to the grid, so several days can
+  be filled in a row.
 - **✍️ רישום ידני** takes a typed line — `16:00 21:30`, `אתמול 16:00 21:30`,
-  `12/09 16:00 21:30` — because that is one message where a date picker plus two
-  time pickers is a dozen taps. An end earlier than the start is read as an
-  overnight shift.
+  `12/09 16:00 21:30` — the fastest path for a recent day. An end earlier than
+  the start is read as an overnight shift.
 - **📈 דוחות** covers the monthly summary, a breakdown by tier, an annual table,
   a forecast, and a CSV export (one row per priced segment, so it can be checked
   line by line).
@@ -116,8 +120,8 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 
 ### Commands
 
-`/start` · `/shift` (toggles start/stop) · `/status` · `/add` · `/report` ·
-`/settings` · `/undo` · `/help`
+`/start` · `/shift` (toggles start/stop) · `/status` · `/add` · `/calendar` ·
+`/report` · `/settings` · `/undo` · `/help`
 
 ## Access control
 

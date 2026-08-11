@@ -12,7 +12,9 @@ from telegram.ext import (
 from ..config import load_config
 from ..core import db
 from . import notifications
-from .handlers import admin, common, manual, reports, settings, shift, text_input
+from .handlers import (
+    admin, calendar, common, manual, reports, settings, shift, text_input,
+)
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ COMMANDS = [
     BotCommand("shift", "התחלה או סיום משמרת"),
     BotCommand("status", "מצב החודש"),
     BotCommand("add", "רישום ידני של משמרת"),
+    BotCommand("calendar", "יומן — בחירת יום והוספת שעות"),
     BotCommand("report", "דוחות"),
     BotCommand("settings", "הגדרות"),
     BotCommand("undo", "מחיקת הרישום האחרון"),
@@ -43,6 +46,7 @@ def build_application(config) -> Application:
     app.add_handler(CommandHandler("shift", shift.cmd_shift))
     app.add_handler(CommandHandler("status", reports.show_status))
     app.add_handler(CommandHandler("add", manual.cmd_add))
+    app.add_handler(CommandHandler("calendar", calendar.cmd_calendar))
     app.add_handler(CommandHandler("report", reports.cb_reports_menu))
     app.add_handler(CommandHandler("settings", settings.show_menu))
     app.add_handler(CommandHandler("undo", shift.cmd_undo))
@@ -58,6 +62,12 @@ def build_application(config) -> Application:
     app.add_handler(CallbackQueryHandler(shift.cb_stop, pattern=r"^sh:stop$"))
     app.add_handler(CallbackQueryHandler(shift.cb_cancel_open, pattern=r"^sh:cancel$"))
     app.add_handler(CallbackQueryHandler(manual.cb_new, pattern=r"^man:new$"))
+
+    # ---- calendar
+    app.add_handler(CallbackQueryHandler(calendar.cb_month, pattern=r"^cal:(today|m:\d+:\d+)$"))
+    app.add_handler(CallbackQueryHandler(calendar.cb_day, pattern=r"^cal:d:\d+:\d+:\d+$"))
+    app.add_handler(CallbackQueryHandler(calendar.cb_add_hours, pattern=r"^cal:add:\d+:\d+:\d+$"))
+    app.add_handler(CallbackQueryHandler(calendar.cb_noop, pattern=r"^noop$"))
 
     # ---- browsing
     app.add_handler(CallbackQueryHandler(shift.cb_month_list, pattern=r"^ls:menu$"))

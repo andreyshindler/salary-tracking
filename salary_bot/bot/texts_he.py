@@ -16,6 +16,9 @@ BTN_STOP_SHIFT = "⏹ סיום משמרת"
 BTN_START_EARLIER = "🕗 התחלתי קודם"
 BTN_CANCEL_SHIFT = "🗑 ביטול המשמרת הפתוחה"
 BTN_MANUAL = "✍️ רישום ידני"
+BTN_CALENDAR = "🗓 יומן"
+BTN_TODAY = "היום"
+BTN_ADD_HOURS = "➕ הוספת שעות"
 BTN_MY_SHIFTS = "🗓 המשמרות שלי"
 BTN_STATUS = "📊 מצב החודש"
 BTN_REPORTS = "📈 דוחות"
@@ -92,6 +95,16 @@ SHIFT_START_IN_FUTURE = "⚠️ שעת ההתחלה שנתת היא בעתיד. 
 
 NO_SHIFTS_YET = "עדיין לא רשמת משמרות בחודש הזה."
 NO_SHIFTS_AT_ALL = "עדיין אין משמרות רשומות."
+
+CALENDAR_TITLE = "🗓 <b>{month}</b>"
+CALENDAR_LEGEND = "‏• = יש רישום · ✡ = חג · [ ] = היום"
+CALENDAR_HINT = "בחר יום כדי לראות או להוסיף שעות."
+CALENDAR_DAY_EMPTY = "אין עדיין שעות ליום הזה."
+ASK_DAY_HOURS = (
+    "✍️ אילו שעות עבדת ב‑<b>{date}</b>?\n\n"
+    "שלח שעת התחלה וסיום, למשל: <code>16:00 21:30</code>\n"
+    "אם הסיום מוקדם מההתחלה, אניח שהמשמרת חצתה חצות."
+)
 
 CONFIRM_DELETE = "למחוק את המשמרת הזו?\n\n{summary}"
 

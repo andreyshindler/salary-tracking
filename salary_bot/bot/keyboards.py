@@ -26,7 +26,8 @@ def main_menu(has_open_shift: bool) -> Markup:
     )
     rows = [
         [toggle, Btn(T.BTN_MANUAL, callback_data="man:new")],
-        [Btn(T.BTN_STATUS, callback_data="st:cur")],
+        [Btn(T.BTN_CALENDAR, callback_data="cal:today"),
+         Btn(T.BTN_STATUS, callback_data="st:cur")],
         [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu"), Btn(T.BTN_REPORTS, callback_data="rep:menu")],
         [Btn(T.BTN_SETTINGS, callback_data="set:menu"), Btn(T.BTN_HELP, callback_data="help")],
     ]

@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from ...core import timeutil as tu
 from ...core.parsing import ParseError, parse_time_of_day
 from .. import keyboards as kb
-from . import manual, settings, shift
+from . import calendar, manual, settings, shift
 from .common import clear_awaiting, guard
 
 
@@ -41,6 +41,7 @@ HANDLERS = {
     "manual": manual.handle_text,
     "rate": settings.handle_rate,
     "ceiling": settings.handle_ceiling,
+    "day_hours": calendar.handle_hours,
     "start_time": _handle_start_time,
 }
 

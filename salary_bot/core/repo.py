@@ -226,6 +226,30 @@ def shifts_in_month(s: Session, user_id: int, year: int, month: int) -> list[Shi
     )
 
 
+def shifts_on_date(s: Session, user_id: int, day: dt.date) -> list[Shift]:
+    """Closed shifts attributed to one local calendar date."""
+    return list(
+        s.execute(
+            select(Shift)
+            .where(
+                Shift.user_id == user_id,
+                Shift.end_utc.is_not(None),
+                Shift.work_date == day,
+            )
+            .order_by(Shift.start_utc)
+        ).scalars()
+    )
+
+
+def days_with_shifts(s: Session, user_id: int, year: int, month: int) -> dict[int, int]:
+    """{day number: total agorot} for a month — one query to mark the grid."""
+    totals: dict[int, int] = {}
+    for shift in shifts_in_month(s, user_id, year, month):
+        day = shift.work_date.day
+        totals[day] = totals.get(day, 0) + shift.total_agorot
+    return totals
+
+
 def recent_shifts(s: Session, user_id: int, limit: int = 10) -> list[Shift]:
     return list(
         s.execute(

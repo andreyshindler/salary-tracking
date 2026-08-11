@@ -1,6 +1,7 @@
 """Bot-layer tests: rendering real records, and checking no button is dead."""
 from __future__ import annotations
 
+import datetime as dt
 import os
 import re
 
@@ -9,6 +10,7 @@ from telegram.ext import CallbackQueryHandler
 
 from salary_bot.bot import formatting as fmt
 from salary_bot.bot import keyboards as kb
+from salary_bot.bot import month_grid
 from salary_bot.core import ceiling as ceiling_mod
 from tests.conftest import local
 
@@ -34,7 +36,6 @@ def test_progress_bar_is_clamped():
 
 
 def test_hebrew_day_names_map_correctly():
-    import datetime as dt
 
     assert fmt.day_name(dt.date(2026, 9, 18)) == "שישי"
     assert fmt.day_name(dt.date(2026, 9, 19)) == "שבת"
@@ -74,7 +75,6 @@ def test_status_card_lists_tiers(session, user, add_shift):
 
 def test_forecast_card_handles_the_no_rate_case(session, user, add_shift):
     from salary_bot.core import repo
-    import datetime as dt
 
     repo.set_rate(session, user.id, 0, dt.date(2000, 1, 1))
     session.flush()
@@ -125,6 +125,8 @@ def _all_callback_data() -> set[str]:
         kb.overtime_menu(True), kb.overtime_menu(False),
         kb.notifications_menu(True, False, True),
         kb.onboarding(True), kb.onboarding(False),
+        month_grid.month_grid(2026, 9, {3: 1}, {12}, today=dt.date(2026, 9, 18)),
+        month_grid.day_menu(dt.date(2026, 9, 18), []),
     ]
     data = set()
     for markup in markups:
@@ -163,7 +165,8 @@ def test_dynamic_shift_callbacks_are_routed(application):
     ]
     for data in ["ls:2026:9", "sd:123", "del:123", "delok:123", "setcity:jerusalem",
                  "notif:open", "acc:list", "acc:ok:123", "acc:no:123", "acc:rev:123",
-                 "acc:show:123"]:
+                 "acc:show:123", "cal:today", "cal:m:2026:9", "cal:d:2026:9:18",
+                 "cal:add:2026:9:18", "noop"]:
         assert any(re.search(p, data) for p in patterns), f"unrouted: {data}"
 
 
@@ -171,6 +174,7 @@ def test_commands_are_declared(application):
     from salary_bot.bot.main import COMMANDS
 
     names = {c.command for c in COMMANDS}
-    assert {"start", "shift", "status", "add", "report", "settings", "undo", "help"} == names
+    assert {"start", "shift", "status", "add", "calendar", "report", "settings",
+            "undo", "help"} == names
     for command in COMMANDS:
         assert command.description, f"/{command.command} has no description"
