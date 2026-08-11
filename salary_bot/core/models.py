@@ -78,7 +78,9 @@ class Rate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # The daytime base rate, and the higher one used by the overnight bands.
     hourly_agorot: Mapped[int] = mapped_column(Integer)
+    night_agorot: Mapped[int] = mapped_column(Integer, default=0)
     effective_from: Mapped[dt.date] = mapped_column(Date)
 
     user: Mapped[User] = relationship(back_populates="rates")
@@ -137,6 +139,9 @@ class ShiftSegment(Base):
     to_utc: Mapped[dt.datetime] = mapped_column(DateTime)
     hours: Mapped[float] = mapped_column(Float)
     multiplier: Mapped[float] = mapped_column(Float)
+    # Which base rate this piece was priced at. Stored because two rates are in
+    # play, so the multiplier alone no longer explains the amount.
+    rate_agorot: Mapped[int] = mapped_column(Integer, default=0)
     kind: Mapped[str] = mapped_column(String(16))   # regular | rest | night
     # Legacy from the tiered-overtime model; no longer written. Kept so existing
     # databases, where the column is NOT NULL, still accept inserts.

@@ -1,52 +1,27 @@
 """Pricing a shift into rate segments.
 
-This is the correctness-critical module. A shift is not ``hours × rate``: the
-same hour is worth a different amount depending on *when* it falls, so the shift
-is cut into segments at every point where the rate changes and each segment is
-priced on its own.
+This is the correctness-critical module. A shift is not ``hours × rate``: both
+the multiplier *and* the base rate change with the clock, so the shift is cut at
+every point where either changes and each piece is priced on its own.
 
-There are exactly **two rates**:
+The rules themselves live in :mod:`pay_bands`. Here we only cut, classify and
+multiply. Two structural points:
 
-======================================  ======
-night (22:00-08:00), Shabbat, or חג     150%
-everything else                         100%
-======================================  ======
-
-Three consequences worth stating, because each is a decision rather than an
-accident:
-
-* **There is no overtime by hours worked.** A twelve-hour day shift is 100%
-  throughout. Length of shift never changes the rate — only the clock and the
-  calendar do.
-* **Premiums do not stack.** An hour that is both night *and* Shabbat is 150%,
-  not 200%. There are only two rates, so the highest that can ever apply is
-  150%.
-* All arithmetic is in **aware UTC**, and the night window is evaluated in
-  Israel local time. A shift crossing the DST change is therefore billed the
-  real number of hours, while 22:00 still means 22:00 on the clock.
+* **Rest windows override the daily bands.** Inside Shabbat or חג the whole
+  stretch takes the rest rate; the daily bands resume when the window closes.
+* All arithmetic is in **aware UTC**, while band edges are built from Israel
+  local wall-clock time. A shift crossing the DST change is billed the real
+  number of hours, and 08:00 still means 08:00 on the clock.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
 
-from ..config import ISRAEL_TZ
 from .calendar_service import CalendarService
-
-EPS = 1e-9
-
-BASE_MULTIPLIER = 1.0
-PREMIUM_MULTIPLIER = 1.5
-
-# Minutes from local midnight. 22:00 and 08:00.
-DEFAULT_NIGHT_START_MIN = 22 * 60
-DEFAULT_NIGHT_END_MIN = 8 * 60
-
-NIGHT_LABEL = "לילה"
-
-KIND_REGULAR = "regular"
-KIND_REST = "rest"
-KIND_NIGHT = "night"
+from .pay_bands import (
+    DAY_RATE, DEFAULT_BANDS, band_at, band_boundaries, rest_window_at, rest_windows,
+)
 
 
 @dataclass(frozen=True)
@@ -55,8 +30,9 @@ class PricedSegment:
     end: dt.datetime            # aware UTC
     hours: float
     multiplier: float
-    kind: str                   # regular | rest | night
-    reason: str                 # Hebrew label, e.g. "שבת" or "לילה"
+    rate_agorot: int            # the base rate this piece was priced at
+    kind: str                   # day | night | early | dawn | shabbat | chag
+    reason: str                 # Hebrew label
     amount_agorot: int
 
 
@@ -69,55 +45,11 @@ class PricedShift:
     segments: list[PricedSegment]
 
 
-def _minutes_of_day(moment_utc: dt.datetime) -> float:
-    local = moment_utc.astimezone(ISRAEL_TZ)
-    return local.hour * 60 + local.minute + local.second / 60
-
-
-def is_night(
-    moment_utc: dt.datetime,
-    night_start_min: int = DEFAULT_NIGHT_START_MIN,
-    night_end_min: int = DEFAULT_NIGHT_END_MIN,
-) -> bool:
-    """Whether an instant falls in the night window, in Israel local time."""
-    if night_start_min == night_end_min:
-        return False  # an empty window disables the premium
-    minutes = _minutes_of_day(moment_utc)
-    if night_start_min > night_end_min:
-        # The usual case: the window wraps midnight (22:00 -> 08:00).
-        return minutes >= night_start_min or minutes < night_end_min
-    return night_start_min <= minutes < night_end_min
-
-
-def _night_boundaries(
-    start: dt.datetime, end: dt.datetime, night_start_min: int, night_end_min: int
-) -> list[dt.datetime]:
-    """Every night-window edge in the span, as aware UTC.
-
-    Built from *local* wall-clock times and then converted, so the boundary sits
-    at 22:00 on the clock regardless of the UTC offset in force that day.
-    """
-    if night_start_min == night_end_min:
-        return []
-
-    day = start.astimezone(ISRAEL_TZ).date() - dt.timedelta(days=1)
-    last = end.astimezone(ISRAEL_TZ).date() + dt.timedelta(days=1)
-
-    edges: list[dt.datetime] = []
-    while day <= last:
-        midnight = dt.datetime.combine(day, dt.time())
-        for minutes in {night_start_min, night_end_min}:
-            local = (midnight + dt.timedelta(minutes=minutes)).replace(tzinfo=ISRAEL_TZ)
-            edges.append(local.astimezone(dt.timezone.utc))
-        day += dt.timedelta(days=1)
-    return edges
-
-
 def _merge_adjacent(segments: list[PricedSegment]) -> list[PricedSegment]:
     """Collapse touching segments priced identically.
 
-    A night boundary inside Shabbat would otherwise split one 150% stretch into
-    two identical-looking rows on the breakdown card, which reads as a mistake.
+    Band edges inside a rest window would otherwise split one continuous 150%
+    stretch into several identical-looking rows, which reads as a mistake.
     """
     merged: list[PricedSegment] = []
     for seg in segments:
@@ -127,13 +59,14 @@ def _merge_adjacent(segments: list[PricedSegment]) -> list[PricedSegment]:
             and prev.end == seg.start
             and prev.kind == seg.kind
             and prev.multiplier == seg.multiplier
-            and prev.reason == seg.reason
+            and prev.rate_agorot == seg.rate_agorot
         ):
             merged[-1] = PricedSegment(
                 start=prev.start,
                 end=seg.end,
                 hours=prev.hours + seg.hours,
                 multiplier=prev.multiplier,
+                rate_agorot=prev.rate_agorot,
                 kind=prev.kind,
                 reason=prev.reason,
                 amount_agorot=prev.amount_agorot + seg.amount_agorot,
@@ -146,15 +79,16 @@ def _merge_adjacent(segments: list[PricedSegment]) -> list[PricedSegment]:
 def price_shift(
     start: dt.datetime,
     end: dt.datetime,
-    hourly_agorot: int,
+    day_agorot: int,
+    night_agorot: int,
     calendar: CalendarService,
-    night_start_min: int = DEFAULT_NIGHT_START_MIN,
-    night_end_min: int = DEFAULT_NIGHT_END_MIN,
+    bands=DEFAULT_BANDS,
     apply_premiums: bool = True,
 ) -> PricedShift:
     """Split a shift at every rate change and price each piece.
 
     ``start`` and ``end`` must be aware datetimes; they are normalised to UTC.
+    ``apply_premiums=False`` prices everything flat at the day rate.
     """
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("price_shift requires timezone-aware datetimes")
@@ -164,32 +98,40 @@ def price_shift(
     if end <= start:
         raise ValueError("shift end must be after its start")
 
-    blocks = calendar.rest_blocks_overlapping(start, end) if apply_premiums else []
+    rates = {DAY_RATE: day_agorot, "night": night_agorot}
 
-    # 1. Boundaries: the shift edges, every rest-block edge, and every night
-    #    edge falling strictly inside.
+    if not apply_premiums:
+        hours = (end - start).total_seconds() / 3600.0
+        segment = PricedSegment(
+            start=start, end=end, hours=hours, multiplier=1.0,
+            rate_agorot=day_agorot, kind="day", reason="",
+            amount_agorot=round(hours * day_agorot),
+        )
+        return PricedShift(start, end, round(hours, 6), segment.amount_agorot, [segment])
+
+    windows = rest_windows(calendar, start, end)
+
+    # 1. Boundaries: shift edges, rest-window edges, and daily band edges.
     points = {start, end}
-    if apply_premiums:
-        edges = [e for b in blocks for e in (b.start, b.end)]
-        edges += _night_boundaries(start, end, night_start_min, night_end_min)
-        points.update(e for e in edges if start < e < end)
+    edges = [e for w in windows for e in (w.start, w.end)]
+    edges += band_boundaries(start, end, bands)
+    points.update(e for e in edges if start < e < end)
     ordered = sorted(points)
 
-    # 2. Classify and price each piece. Rest beats night only for the label;
-    #    both carry the same multiplier, so nothing stacks.
+    # 2. Classify and price each piece: a rest window wins over the daily band.
     segments: list[PricedSegment] = []
     for left, right in zip(ordered, ordered[1:]):
         midpoint = left + (right - left) / 2
 
-        kind, reason = KIND_REGULAR, ""
-        if apply_premiums:
-            block = next((b for b in blocks if b.contains(midpoint)), None)
-            if block is not None:
-                kind, reason = KIND_REST, block.label
-            elif is_night(midpoint, night_start_min, night_end_min):
-                kind, reason = KIND_NIGHT, NIGHT_LABEL
+        window = rest_window_at(midpoint, windows)
+        if window is not None:
+            multiplier, kind, reason = window.multiplier, window.kind, window.label
+            rate_agorot = rates[DAY_RATE]
+        else:
+            band = band_at(midpoint, bands)
+            multiplier, kind, reason = band.multiplier, band.kind, band.label
+            rate_agorot = rates[band.rate]
 
-        multiplier = BASE_MULTIPLIER if kind == KIND_REGULAR else PREMIUM_MULTIPLIER
         hours = (right - left).total_seconds() / 3600.0
         segments.append(
             PricedSegment(
@@ -197,9 +139,10 @@ def price_shift(
                 end=right,
                 hours=hours,
                 multiplier=multiplier,
+                rate_agorot=rate_agorot,
                 kind=kind,
                 reason=reason,
-                amount_agorot=round(hours * multiplier * hourly_agorot),
+                amount_agorot=round(hours * multiplier * rate_agorot),
             )
         )
 
@@ -218,9 +161,9 @@ def price_shift(
 def estimate_hours_for_amount(
     amount_agorot: int, hourly_agorot: int, multiplier: float = 1.0
 ) -> float:
-    """How many hours at a given multiplier are worth ``amount_agorot``.
+    """How many hours at a given rate and multiplier are worth ``amount_agorot``.
 
-    Used to turn "you have 3,693 NIS of headroom left" into "that is about 36.9
+    Used to turn "you have 3,693 NIS of headroom left" into "that is about 98
     ordinary hours", which is the form the user can actually act on.
     """
     if hourly_agorot <= 0 or multiplier <= 0:

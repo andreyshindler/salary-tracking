@@ -41,11 +41,41 @@ def fmt_pct(multiplier: float) -> str:
     return f"{round(multiplier * 100)}%"
 
 
-KIND_LABELS_HE = {"regular": "רגיל", "rest": "שבת/חג", "night": "לילה"}
+KIND_LABELS_HE = {
+    "day": "יום", "night": "לילה", "early": "לפנות בוקר", "dawn": "בוקר",
+    "shabbat": "שבת", "chag": "חג",
+    # Kinds written by earlier versions, kept so old rows still render.
+    "regular": "רגיל", "rest": "שבת/חג",
+}
+
+
+SEGMENT_ICONS = {
+    "shabbat": "🕯", "chag": "🕯", "rest": "🕯",
+    "night": "🌙", "early": "🌙", "dawn": "🌅",
+}
 
 
 def kind_label(kind: str) -> str:
     return KIND_LABELS_HE.get(kind, kind)
+
+
+def bands_text(day_agorot: int, night_agorot: int) -> str:
+    """The rate table with the user's own rates filled in."""
+    from ..core.pay_bands import DAY_RATE, DEFAULT_BANDS, REST_RULES
+    from ..core.parsing import format_minutes
+
+    rates = {DAY_RATE: day_agorot, "night": night_agorot}
+    lines = [
+        rtl(f"• {format_minutes(b.start_min)}–{format_minutes(b.end_min)} · "
+            f"<b>{fmt_pct(b.multiplier)}</b> × {fmt_money(rates[b.rate])} ({b.label})")
+        for b in DEFAULT_BANDS
+    ]
+    lines.append("")
+    lines.append(rtl(f"• שישי 20:00 → שבת 20:00 · "
+                     f"<b>{fmt_pct(REST_RULES['shabbat'][0])}</b> × {fmt_money(day_agorot)}"))
+    lines.append(rtl(f"• ערב חג 20:00 → חג 20:00 · "
+                     f"<b>{fmt_pct(REST_RULES['chag'][0])}</b> × {fmt_money(day_agorot)}"))
+    return "\n".join(lines)
 
 
 def day_name(day: dt.date) -> str:
@@ -69,6 +99,18 @@ def _local_hhmm(naive_utc: dt.datetime) -> str:
     return tu.to_local(naive_utc).strftime("%H:%M")
 
 
+def _span(from_utc: dt.datetime, to_utc: dt.datetime) -> str:
+    """A time range, carrying the end date when it falls on another day.
+
+    Without it a Shabbat window renders as "20:00–20:00", which reads as a
+    mistake rather than as twenty-four hours.
+    """
+    start, end = tu.to_local(from_utc), tu.to_local(to_utc)
+    if start.date() == end.date():
+        return f"{start:%H:%M}–{end:%H:%M}"
+    return f"{start:%H:%M}–{end:%H:%M} ({end:%d.%m})"
+
+
 # ------------------------------------------------------------------ shift card
 
 def shift_breakdown(shift: Shift, calendar: CalendarService) -> str:
@@ -76,17 +118,17 @@ def shift_breakdown(shift: Shift, calendar: CalendarService) -> str:
     than just a total."""
     lines: list[str] = []
     for seg in shift.segments:
+        rate = f" × {fmt_money(seg.rate_agorot)}" if seg.rate_agorot else ""
         pieces = [
-            f"• {fmt_pct(seg.multiplier)}",
-            f"{_local_hhmm(seg.from_utc)}–{_local_hhmm(seg.to_utc)}",
+            f"• {fmt_pct(seg.multiplier)}{rate}",
+            _span(seg.from_utc, seg.to_utc),
             f"{fmt_hours(seg.hours)} ש׳",
             fmt_money(seg.amount_agorot),
         ]
         line = " · ".join(pieces)
-        if seg.kind == "rest" and seg.reason:
-            line += f"  🕯 {seg.reason}"
-        elif seg.kind == "night":
-            line += f"  🌙 {seg.reason}"
+        icon = SEGMENT_ICONS.get(seg.kind)
+        if icon and seg.reason:
+            line += f"  {icon} {seg.reason}"
         lines.append(rtl(line))
     return "\n".join(lines)
 
@@ -104,7 +146,7 @@ def shift_card(shift: Shift, calendar: CalendarService, status: MonthStatus | No
 
     lines = [
         rtl(header),
-        rtl(f"🕐 {start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')} · "
+        rtl(f"🕐 {_span(shift.start_utc, shift.end_utc)} · "
             f"{fmt_hours(total_hours)} שעות"),
         "",
         shift_breakdown(shift, calendar),
@@ -200,9 +242,10 @@ def shift_line(shift: Shift, calendar: CalendarService) -> str:
     start_local = tu.to_local(shift.start_utc)
     end_local = tu.to_local(shift.end_utc)
     hours = sum(s.hours for s in shift.segments)
-    if any(s.kind == "rest" for s in shift.segments):
+    kinds = {s.kind for s in shift.segments}
+    if kinds & {"shabbat", "chag", "rest"}:
         mark = " 🕯"
-    elif any(s.kind == "night" for s in shift.segments):
+    elif kinds & {"night", "early", "dawn"}:
         mark = " 🌙"
     else:
         mark = ""

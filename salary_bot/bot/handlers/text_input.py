@@ -41,7 +41,6 @@ HANDLERS = {
     "manual": manual.handle_text,
     "rate": settings.handle_rate,
     "ceiling": settings.handle_ceiling,
-    "night_window": settings.handle_night_window,
     "start_time": _handle_start_time,
 }
 

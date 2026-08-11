@@ -11,10 +11,11 @@ import datetime as dt
 
 import pytest
 
+from salary_bot.bot import formatting as fmt
 from salary_bot.bot.handlers import common, manual, reports, settings, shift, text_input
 from salary_bot.core import db, repo
 from salary_bot.core import timeutil as tu
-from tests.conftest import RATE
+from tests.conftest import NIGHT_RATE, RATE
 
 from tests.stubs import TG_ID, FakeContext, FakeUpdate, last_output
 
@@ -34,7 +35,7 @@ def bot_env(tmp_path):
     ))
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
-        repo.set_rate(s, user.id, RATE, dt.date(2000, 1, 1))
+        repo.set_rate(s, user.id, RATE, dt.date(2000, 1, 1), NIGHT_RATE)
     return True
 
 
@@ -67,14 +68,13 @@ async def test_start_command_renders_the_main_menu(bot_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_help_renders_the_two_rate_model(bot_env, ctx):
+async def test_help_renders_the_rate_table(bot_env, ctx):
     update = FakeUpdate(text="/help")
     await common.cmd_help(update, ctx)
     text = last_output(update)
     assert "חול המועד" in text
-    assert "150%" in text and "100%" in text
-    assert "22:00–08:00" in text          # the night window, from settings
-    assert "125%" not in text             # the old tiered model is gone
+    for expected in ("100%", "125%", "150%", "200%", "08:00–22:00", "22:00–05:00"):
+        assert expected in text, expected
 
 
 @pytest.mark.asyncio
@@ -142,15 +142,15 @@ async def test_manual_entry_end_to_end(bot_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_manual_entry_on_a_friday_evening_splits_at_candle_lighting(bot_env, ctx):
+async def test_manual_entry_on_a_friday_evening_splits_at_the_shabbat_window(bot_env, ctx):
     ctx.user_data["awaiting"] = "manual"
-    update = FakeUpdate(text="18/09/2026 16:00 21:30")
+    update = FakeUpdate(text="18/09/2026 18:00 23:00")
     await manual.handle_text(update, ctx)
 
     card = last_output(update)
     assert "🕯 שבת" in card
     assert "150%" in card
-    assert "18:27" in card
+    assert "20:00" in card          # where the window opens
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_reports_screens_all_render(bot_env, ctx):
 @pytest.mark.asyncio
 async def test_csv_export_produces_a_document(bot_env, ctx):
     ctx.user_data["awaiting"] = "manual"
-    await manual.handle_text(FakeUpdate(text="10/06/2026 20:00 02:00"), ctx)
+    await manual.handle_text(FakeUpdate(text="10/06/2026 20:00 08:00"), ctx)
 
     update = FakeUpdate(callback="rep:csv")
     await reports.cb_export_csv(update, ctx)
@@ -224,28 +224,29 @@ async def test_csv_export_produces_a_document(bot_env, ctx):
     payload = ctx.bot.documents[0]["document"].input_file_content
     text = payload.decode("utf-8-sig")
     assert "מזהה משמרת" in text
-    # One row per priced segment, so both rates are itemised separately.
-    assert "100%" in text and "150%" in text
-    assert "לילה" in text
+    # One row per priced segment, so every band is itemised separately.
+    for expected in ("100%", "125%", "200%", "לילה", "בוקר"):
+        assert expected in text, expected
 
 
 @pytest.mark.asyncio
 async def test_settings_screen_and_rate_change(bot_env, ctx):
     menu = FakeUpdate(callback="set:menu")
     await settings.show_menu(menu, ctx)
-    assert "תעריף שעתי" in last_output(menu)
+    assert "תעריף יום" in last_output(menu)
 
     ask = FakeUpdate(callback="set:rate")
     await settings.cb_ask_rate(ask, ctx)
     assert ctx.user_data["awaiting"] == "rate"
 
-    saved = FakeUpdate(text="120")
+    saved = FakeUpdate(text="37.5 38.5")
     await settings.handle_rate(saved, ctx)
-    assert "₪120" in last_output(saved)
+    out = last_output(saved)
+    assert "₪37.50" in out and "₪38.50" in out
 
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
-        assert repo.effective_rate(s, user.id, tu.now_local().date()) == 12_000
+        assert repo.effective_rates(s, user.id, tu.now_local().date()) == (3_750, 3_850)
 
 
 @pytest.mark.asyncio
@@ -257,29 +258,6 @@ async def test_ceiling_change_is_applied(bot_env, ctx):
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
         assert repo.effective_ceiling(s, user.id, tu.now_local().date()) == 1_200_000
-
-
-@pytest.mark.asyncio
-async def test_city_change_moves_the_shabbat_boundary(bot_env, ctx):
-    update = FakeUpdate(callback="setcity:jerusalem")
-    await settings.cb_set_city(update, ctx)
-    assert "ירושלים" in last_output(update)
-
-    ctx.user_data["awaiting"] = "manual"
-    entry = FakeUpdate(text="18/09/2026 16:00 21:30")
-    await manual.handle_text(entry, ctx)
-
-    # Jerusalem lights 40 minutes before sunset rather than 18, so the 150%
-    # segment must start earlier than Tel Aviv's 18:27.
-    from salary_bot.core.calendar_service import CalendarService
-
-    jlm_candle = (
-        CalendarService("jerusalem")
-        .block_containing_day(dt.date(2026, 9, 19))
-        .start.astimezone(tu.ISRAEL_TZ)
-    )
-    assert jlm_candle.strftime("%H:%M") < "18:27"
-    assert jlm_candle.strftime("%H:%M") in last_output(entry)
 
 
 @pytest.mark.asyncio
@@ -388,38 +366,32 @@ async def test_backdated_start_time(bot_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_night_window_can_be_changed_and_shifts_recalculated(bot_env, ctx):
-    """The whole point of recalculation: correcting shifts already logged under
-    rules that have since changed."""
+async def test_recalculation_respects_rate_versioning(bot_env, ctx):
+    """Recalculation re-applies the *rules*, not today's rates to every shift.
+
+    A new rate takes effect from the first of the current month, so a shift in a
+    closed month must keep the rates it was priced at even after a recalculate —
+    otherwise a raise would silently restate a month already reported.
+    """
     ctx.user_data["awaiting"] = "manual"
     await manual.handle_text(FakeUpdate(text="10/06/2026 20:00 02:00"), ctx)
 
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
         before = repo.recent_shifts(s, user.id)[0].total_agorot
-    assert before == round(2 * RATE + 4 * 1.5 * RATE)   # 2h day + 4h night
+    assert before == 2 * RATE + 4 * NIGHT_RATE   # 2h day band + 4h night band
 
-    ask = FakeUpdate(callback="set:otthr")
-    await settings.cb_ask_night_window(ask, ctx)
-    assert ctx.user_data["awaiting"] == "night_window"
-
-    saved = FakeUpdate(text="23:00 06:00")
-    await settings.handle_night_window(saved, ctx)
-    assert "23:00" in last_output(saved)
-
-    # Stored shifts keep the old numbers until explicitly recalculated.
-    with db.session_scope() as s:
-        user = db.get_or_create_user(s, TG_ID)
-        assert repo.recent_shifts(s, user.id)[0].total_agorot == before
+    saved = FakeUpdate(text="200 400")
+    await settings.handle_rate(saved, ctx)
+    assert "₪200" in last_output(saved) and "₪400" in last_output(saved)
 
     recalc = FakeUpdate(callback="set:recalc")
     await settings.cb_recalculate(recalc, ctx)
-    assert "1" in last_output(recalc)
 
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
-        assert repo.recent_shifts(s, user.id)[0].total_agorot == round(
-            3 * RATE + 3 * 1.5 * RATE
+        assert repo.recent_shifts(s, user.id)[0].total_agorot == before, (
+            "a June shift must not be re-priced at rates effective from this month"
         )
 
 
@@ -431,12 +403,14 @@ async def test_recalculate_with_no_shifts_says_so(bot_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_a_night_shift_card_shows_the_night_premium(bot_env, ctx):
+async def test_a_night_shift_card_shows_both_base_rates(bot_env, ctx):
     ctx.user_data["awaiting"] = "manual"
     update = FakeUpdate(text="10/06/2026 20:00 02:00")
     await manual.handle_text(update, ctx)
 
     card = last_output(update)
     assert "🌙" in card
-    assert "100%" in card and "150%" in card
-    assert "22:00" in card          # the split point
+    assert "22:00" in card                                   # the band boundary
+    # Both base rates must be visible: the multiplier alone no longer explains
+    # the amount now that two rates are in play.
+    assert fmt.fmt_money(RATE) in card and fmt.fmt_money(NIGHT_RATE) in card

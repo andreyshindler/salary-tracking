@@ -42,15 +42,15 @@ def test_hebrew_day_names_map_correctly():
 
 
 def test_shift_card_shows_the_shabbat_split(session, user, cal, add_shift):
-    shift = add_shift(local(2026, 9, 18, 16), local(2026, 9, 18, 21, 30))
+    shift = add_shift(local(2026, 9, 18, 18), local(2026, 9, 18, 23))
     status = ceiling_mod.month_status(session, user, 2026, 9)
     card = fmt.shift_card(shift, cal, status)
 
     assert "שישי, 18.09.2026" in card
-    assert "16:00–21:30" in card
+    assert "18:00–23:00" in card
     assert "100%" in card and "150%" in card
     assert "🕯 שבת" in card
-    assert "18:27" in card                      # the candle-lighting split point
+    assert "20:00" in card                      # where the Shabbat window opens
     assert fmt.fmt_money(shift.total_agorot) in card
     assert "₪10,113" in card                    # the ceiling still shown
     assert "▓" in card and "░" in card
@@ -64,11 +64,11 @@ def test_status_card_renders_with_no_shifts(session, user):
 
 
 def test_status_card_lists_tiers(session, user, add_shift):
-    # 20:00-02:00 spans the 22:00 night boundary, so both rates appear.
-    add_shift(local(2026, 6, 9, 20), local(2026, 6, 10, 2))
+    # 20:00-08:00 crosses every daily band.
+    add_shift(local(2026, 6, 10, 20), local(2026, 6, 11, 8))
     status = ceiling_mod.month_status(session, user, 2026, 6)
     card = fmt.status_card(status)
-    for expected in ("100%", "150%", "רגיל", "לילה"):
+    for expected in ("100%", "125%", "200%", "יום", "לילה", "בוקר"):
         assert expected in card
 
 
@@ -122,7 +122,7 @@ def _all_callback_data() -> set[str]:
         kb.access_request(7), kb.user_detail(7, is_self=False),
         kb.user_detail(7, is_self=True),
         kb.city_picker("tel_aviv"),
-        kb.overtime_menu(True, "22:00–08:00"), kb.overtime_menu(False, "22:00–08:00"),
+        kb.overtime_menu(True), kb.overtime_menu(False),
         kb.notifications_menu(True, False, True),
         kb.onboarding(True), kb.onboarding(False),
     ]

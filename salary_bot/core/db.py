@@ -51,6 +51,12 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("night_start_min", "INTEGER NOT NULL DEFAULT 1320"),  # 22:00
         ("night_end_min", "INTEGER NOT NULL DEFAULT 480"),     # 08:00
     ],
+    "rates": [
+        ("night_agorot", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "shift_segments": [
+        ("rate_agorot", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 

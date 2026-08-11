@@ -45,6 +45,20 @@ def parse_amount(text: str) -> int:
     return round(value * 100)
 
 
+def parse_rates(text: str) -> tuple[int, int]:
+    """Parse "37.5 38.5" into (day, night) agorot.
+
+    A single number sets both, so a one-rate arrangement still works.
+    """
+    parts = [p for p in re.split(r"[\s,;/]+", text.strip()) if p]
+    if len(parts) == 1:
+        value = parse_amount(parts[0])
+        return value, value
+    if len(parts) == 2:
+        return parse_amount(parts[0]), parse_amount(parts[1])
+    raise ParseError("שלח תעריף אחד או שניים, למשל: 37.5 38.5")
+
+
 def parse_hours(text: str) -> float:
     cleaned = text.strip().replace(",", ".")
     if not re.fullmatch(r"\d+(\.\d+)?", cleaned):

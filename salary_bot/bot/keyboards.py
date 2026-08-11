@@ -102,7 +102,6 @@ def settings_menu(is_admin: bool = False, pending_count: int = 0) -> Markup:
     rows = [
         [Btn(T.BTN_SET_RATE, callback_data="set:rate"),
          Btn(T.BTN_SET_CEILING, callback_data="set:ceil")],
-        [Btn(T.BTN_SET_CITY, callback_data="set:city")],
         [Btn(T.BTN_SET_OT, callback_data="set:ot")],
         [Btn(T.BTN_SET_NOTIF, callback_data="set:notif")],
         [Btn(T.BTN_SET_BACKUP, callback_data="set:backup")],
@@ -130,11 +129,9 @@ def city_picker(current: str) -> Markup:
     return Markup(rows)
 
 
-def overtime_menu(apply_overtime: bool, night_label: str) -> Markup:
+def overtime_menu(apply_overtime: bool) -> Markup:
     toggle_label = "🔕 כבה חישוב תוספות" if apply_overtime else "🔔 הפעל חישוב תוספות"
     rows = [[Btn(toggle_label, callback_data="set:ottoggle")]]
-    if apply_overtime:
-        rows.append([Btn(f"🌙 שעות לילה: {night_label}", callback_data="set:otthr")])
     rows.append([Btn(T.BTN_RECALC, callback_data="set:recalc")])
     rows.append([Btn(T.BTN_BACK, callback_data="set:menu")])
     return Markup(rows)
@@ -156,7 +153,6 @@ def onboarding(needs_rate: bool) -> Markup:
     rows = []
     if needs_rate:
         rows.append([Btn(T.BTN_SET_RATE, callback_data="set:rate")])
-    rows.append([Btn(T.BTN_SET_CITY, callback_data="set:city")])
     rows.append([Btn(T.BTN_BACK, callback_data=CB_MAIN)])
     return Markup(rows)
 

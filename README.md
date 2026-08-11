@@ -4,8 +4,8 @@ A Telegram bot for logging work hours and tracking earnings against a monthly
 tax-exemption ceiling, with Israeli calendar awareness.
 
 You tell it when you started and finished. It prices the shift against your
-hourly rate — splitting it at night, Shabbat and holiday boundaries — and
-tells you how much room is left before you reach the ceiling.
+rates — splitting it at every band, Shabbat and holiday boundary — and tells you
+how much room is left before you reach the ceiling.
 
 The interface is in Hebrew; the code and docs are in English.
 
@@ -13,50 +13,64 @@ The interface is in Hebrew; the code and docs are in English.
 
 ## Why the pricing is not `hours × rate`
 
-The same hour is worth a different amount depending on when it falls, so each
-shift is cut into segments wherever the rate changes and each piece is priced
-separately. There are exactly two rates:
+Both the multiplier **and the base rate** change with the clock, so each shift is
+cut into segments wherever either changes and every piece is priced on its own.
 
-| | |
-| ---- | ------------------------------------------------- |
-| 150% | night (22:00–08:00 by default), Shabbat, and חג     |
-| 100% | everything else                                     |
+Daily bands (they tile a full 24 hours, so every minute is covered exactly once):
 
-**Shift length never changes the rate.** A twelve-hour day shift is 100%
-throughout — only the clock and the calendar matter, never hours worked.
+| window | multiplier | base rate |
+| ------------- | ---- | ----- |
+| 08:00 – 22:00 | 100% | day   |
+| 22:00 – 05:00 | 100% | night |
+| 05:00 – 07:00 | 125% | night |
+| 07:00 – 08:00 | 200% | night |
 
-**Premiums do not stack.** An hour that is both night *and* Shabbat is 150%, not
-200%. 150% is the highest rate that can ever apply.
+Rest windows, which **override the daily bands entirely** for the hours they
+cover:
 
-Rest periods run from **candle lighting to havdalah**, not midnight to midnight,
-so a shift starting Friday afternoon is genuinely split across two rates. The
-boundary depends on your city — Jerusalem lights 40 minutes before sunset,
-Tel Aviv 18 — which is why the city setting is required.
+| window | multiplier | base rate |
+| ---------------------------- | ---- | --- |
+| Friday 20:00 → Saturday 20:00 | 150% | day |
+| ערב חג 20:00 → חג 20:00       | 200% | day |
 
-A Saturday evening shift can therefore carry three rates in a row:
+So Saturday 05:00–07:00 is 150% × day rate, not 125% × night rate. Where Shabbat
+and חג overlap — Rosh Hashana falling on a Saturday — the higher multiplier wins.
+
+**Shift length never affects the rate.** A twelve-hour day shift is 100%
+throughout; only the clock and the calendar matter.
+
+Because two base rates are in play, the multiplier alone no longer explains an
+amount, so every line shows the rate it was priced at:
 
 ```
-• 150% · 18:00–19:20 · 1.33 ש׳ · ₪200     🕯 שבת
-• 100% · 19:20–22:00 · 2.67 ש׳ · ₪266.67
-• 150% · 22:00–23:00 · 1 ש׳ · ₪150        🌙 לילה
+✅ נרשמה משמרת — רביעי, 10.06.2026
+🕐 20:00–08:00 (11.06) · 12 שעות
+
+• 100% × ₪37.50 · 20:00–22:00 · 2 ש׳ · ₪75
+• 100% × ₪38.50 · 22:00–05:00 · 7 ש׳ · ₪269.50   🌙 לילה
+• 125% × ₪38.50 · 05:00–07:00 · 2 ש׳ · ₪96.25    🌙 לפנות בוקר
+• 200% × ₪38.50 · 07:00–08:00 · 1 ש׳ · ₪77       🌅 בוקר
+
+💰 סה״כ המשמרת: ₪517.75
 ```
 
 Two classifications that are easy to get wrong and are covered by tests:
 
-- **חול המועד is an ordinary working day** (100%). Only the nine statutory yom
-  tov days carry rest-day pay. Treating chol hamoed as a holiday would inflate
-  earnings by 50% for a week, twice a year.
-- **יום העצמאות is a rest day** for pay purposes even though it is not halachic
-  yom tov, so the calendar library does not flag it and it is added explicitly.
+- **חול המועד is an ordinary working day.** Only the statutory yom tov days get
+  the chag window. Pricing chol hamoed as chag would double the pay for a week,
+  twice a year.
+- **יום העצמאות counts as chag**, even though the calendar library does not flag
+  it as yom tov, so it is added explicitly.
 
-The night window is evaluated in Israel local time, so 22:00 means 22:00 on the
-clock. All other arithmetic is done in UTC, so a shift crossing the DST change
-bills the real number of hours. Midnight is not a rate change: 22:00–04:00 is a
-single 150% stretch, not two.
+Rest windows use fixed clock times rather than candle lighting, so they do not
+vary by city or season. The Hebrew calendar is still used to decide *which* days
+are Shabbat and חג. All arithmetic is in UTC while band edges are built from
+Israel local time, so a shift crossing the DST change bills the real number of
+hours and 08:00 still means 08:00 on the clock. Midnight is not a rate change.
 
-The night hours are configurable in **⚙️ הגדרות → 🌙 שעות לילה** — they are an
-employment term, not a law. Premiums can also be switched off entirely for a
-flat-rate arrangement.
+The rules live in `salary_bot/core/pay_bands.py` — the table there is the single
+place to change them. Premiums can also be switched off entirely for a flat-rate
+arrangement.
 
 ## The menu
 
@@ -77,8 +91,8 @@ flat-rate arrangement.
 - **📈 דוחות** covers the monthly summary, a breakdown by tier, an annual table,
   a forecast, and a CSV export (one row per priced segment, so it can be checked
   line by line).
-- **⚙️ הגדרות** holds the hourly rate, the ceiling, the city, the night hours
-  and the notification switches, plus **🔄 חשב מחדש** to re-price every stored shift
+- **⚙️ הגדרות** holds the two base rates, the ceiling, the rate table and the
+  notification switches, plus **🔄 חשב מחדש** to re-price every stored shift
   after a rules change.
 
 Every logged shift replies with a breakdown card showing the reasoning rather
@@ -86,16 +100,18 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 
 ```
 ✅ נרשמה משמרת — שישי, 18.09.2026
-🕐 16:00–21:30 · 5.5 שעות
+🕐 18:00–23:00 (19.09) · 29 שעות
 
-• 100% · 16:00–18:27 · 2.45 ש׳ · ₪245
-• 150% · 18:27–21:30 · 3.05 ש׳ · ₪458  🕯 שבת
+• 100% × ₪37.50 · 18:00–20:00 · 2 ש׳ · ₪75
+• 150% × ₪37.50 · 20:00–20:00 (19.09) · 24 ש׳ · ₪1,350  🕯 שבת
+• 100% × ₪37.50 · 20:00–22:00 · 2 ש׳ · ₪75
+• 100% × ₪38.50 · 22:00–23:00 · 1 ש׳ · ₪38.50  🌙 לילה
 
-💰 סה״כ המשמרת: ₪703
+💰 סה״כ המשמרת: ₪1,538.50
 
-📊 ספטמבר 2026: ₪6,420 מתוך ₪10,113
-▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░ 63%
-נותרו ₪3,693 ≈ 36.9 שעות רגילות (24.6 שעות שבת)
+📊 ספטמבר 2026: ₪1,538.50 מתוך ₪10,113
+▓▓▓░░░░░░░░░░░░░░░░░ 15%
+נותרו ₪8,574.50 ≈ 228.65 שעות רגילות
 ```
 
 ### Commands
@@ -110,7 +126,7 @@ admin approval is needed, and the admin receives their name and ID with
 **✅ אשר / ❌ דחה** buttons — a stranger's first message becomes a request the
 admin can act on in one tap, rather than a dead end.
 
-- Approved users are notified and get their **own** rate, ceiling, city and
+- Approved users are notified and get their **own** rates, ceiling and
   shifts. Nothing is shared between accounts.
 - Denied users are told once and cannot reach any feature.
 - The admin manages everyone from **⚙️ הגדרות → 👥 משתמשים**, which shows the
@@ -161,8 +177,9 @@ Leave `ALLOWED_USER_IDS` empty at first and send the bot `/start` — it refuses
 the message but replies with your Telegram user ID. Put that in `.env`, then
 `docker compose up -d` to pick it up.
 
-Then, in the bot: **⚙️ הגדרות** → set your **hourly rate** and your **city**.
-The ceiling is pre-seeded at 10,113 ₪/month and can be changed there too.
+Then, in the bot: **⚙️ הגדרות → 💰 תעריפים** and send your day and night rates,
+e.g. `37.5 38.5`. The ceiling is pre-seeded at 10,113 ₪/month and can be changed
+there too.
 
 Day to day:
 
@@ -247,7 +264,7 @@ DB=/home/komodo/projects/salary-tracking/data/salary.db deploy/backup.sh
 
 The test suite covers the pricing engine against golden cases (Friday evening
 splits, Saturday-night havdalah, Yom Kippur, chol hamoed, midnight crossings,
-the DST change, the night window), the ceiling arithmetic, the input parser,
+the DST change, every band boundary), the ceiling arithmetic, the input parser,
 the rendering, and an end-to-end pass over every handler with stub Telegram
 objects. One test walks every button in every keyboard and asserts it routes to
 a registered handler, so a typo in `callback_data` fails the build rather than
@@ -258,7 +275,8 @@ producing a button that silently does nothing.
 ```
 salary_bot/
 ├── core/
-│   ├── calendar_service.py   # rest blocks: candle lighting -> havdalah
+│   ├── pay_bands.py          # the rate rules   (change them here)
+│   ├── calendar_service.py   # which days are Shabbat / chag
 │   ├── pay_engine.py         # shift -> priced segments   (start here)
 │   ├── ceiling.py            # monthly totals vs the ceiling
 │   ├── repo.py               # data access, versioned rate/ceiling lookups
@@ -290,9 +308,9 @@ salary_bot/
   `core/db.py` (`_ADDED_COLUMNS`), not Alembic. It adds missing columns on
   startup and is idempotent, but it only ever *adds* — renaming or retyping a
   column would still need doing by hand.
-- Rest-day boundaries use candle lighting and havdalah, which is the customary
-  reading of the 36-hour weekly rest. If your employer computes it differently,
-  the numbers will differ.
+- Rest windows use fixed 20:00→20:00 clock times, not candle lighting, so they
+  do not follow the season. The chag window is assumed to open on the *eve*,
+  mirroring the Shabbat rule.
 - Recorded shifts are **not** re-priced automatically when you change the rate,
   the city or the pay rules — stored segments are what makes past reports
   auditable. Use **⚙️ הגדרות → 🌙 שעות לילה → 🔄 חשב מחדש** to apply new rules

@@ -14,9 +14,7 @@ from ...core import access, db, repo
 from ...core import ceiling as ceiling_mod
 from ...core import timeutil as tu
 from ...core.cities import get_city
-from ...core.parsing import (
-    ParseError, format_minutes, parse_amount, parse_night_window,
-)
+from ...core.parsing import ParseError, parse_amount, parse_rates
 from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
@@ -43,19 +41,15 @@ def _settings_markup(tg_user_id: int):
     return kb.settings_menu(admin, pending)
 
 
-def _night_label(user) -> str:
-    return f"{format_minutes(user.night_start_min)}–{format_minutes(user.night_end_min)}"
-
-
 def _summary(s, user) -> str:
     today = tu.now_local().date()
-    rate = repo.effective_rate(s, user.id, today)
+    day_rate, night_rate = repo.effective_rates(s, user.id, today)
     ceiling_agorot = repo.effective_ceiling(s, user.id, today)
-    ot = T.OT_ON.format(night=_night_label(user)) if user.apply_overtime else T.OT_OFF
+    ot = T.OT_ON if user.apply_overtime else T.OT_OFF
     body = T.SETTINGS_SUMMARY.format(
-        rate=f"{fmt.fmt_money(rate)} לשעה" if rate > 0 else "לא הוגדר",
+        rate=f"{fmt.fmt_money(day_rate)} לשעה" if day_rate > 0 else "לא הוגדר",
+        night_rate=f"{fmt.fmt_money(night_rate)} לשעה" if night_rate > 0 else "לא הוגדר",
         ceiling=fmt.fmt_money(ceiling_agorot),
-        city=get_city(user.city).name_he,
         ot=ot,
     )
     return f"<b>{T.SETTINGS_TITLE}</b>\n\n" + "\n".join(fmt.rtl(line) for line in body.splitlines())
@@ -87,33 +81,28 @@ async def cb_ask_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, T.ASK_CEILING, kb.cancel_only())
 
 
-async def cb_ask_night_window(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await guard(update, context):
-        return
-    set_awaiting(context, "night_window")
-    await _reply(update, T.ASK_NIGHT_WINDOW, kb.cancel_only())
-
-
 async def handle_rate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        agorot = parse_amount(update.message.text)
+        day_agorot, night_agorot = parse_rates(update.message.text)
     except ParseError as exc:
         await update.message.reply_text(str(exc), reply_markup=kb.cancel_only())
         return
-    if agorot <= 0:
-        await update.message.reply_text("התעריף חייב להיות גדול מאפס.", reply_markup=kb.cancel_only())
+    if day_agorot <= 0 or night_agorot <= 0:
+        await update.message.reply_text(
+            "התעריף חייב להיות גדול מאפס.", reply_markup=kb.cancel_only())
         return
 
     # Effective from the first of the current month, so this month prices
-    # consistently while earlier months keep the rate they were logged at.
+    # consistently while earlier months keep the rates they were logged at.
     today = tu.now_local().date()
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
-        repo.set_rate(s, user.id, agorot, today.replace(day=1))
+        repo.set_rate(s, user.id, day_agorot, today.replace(day=1), night_agorot)
 
     clear_awaiting(context)
     await update.message.reply_text(
-        T.RATE_SAVED.format(rate=fmt.fmt_money(agorot)),
+        T.RATE_SAVED.format(day=fmt.fmt_money(day_agorot),
+                            night=fmt.fmt_money(night_agorot), hint=T.RECALC_HINT),
         reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
@@ -136,27 +125,6 @@ async def handle_ceiling(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     clear_awaiting(context)
     await update.message.reply_text(
         T.CEILING_SAVED.format(ceiling=fmt.fmt_money(agorot)),
-        reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
-    )
-
-
-async def handle_night_window(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        start_min, end_min = parse_night_window(update.message.text)
-    except ParseError as exc:
-        await update.message.reply_text(str(exc), reply_markup=kb.cancel_only())
-        return
-
-    with db.session_scope() as s:
-        user = db.get_or_create_user(s, update.effective_user.id)
-        user.night_start_min = start_min
-        user.night_end_min = end_min
-        s.flush()
-        label = _night_label(user)
-
-    clear_awaiting(context)
-    await update.message.reply_text(
-        T.NIGHT_WINDOW_SAVED.format(night=label) + "\n\n" + T.RECALC_HINT,
         reply_markup=_settings_markup(update.effective_user.id), parse_mode=ParseMode.HTML,
     )
 
@@ -186,15 +154,13 @@ async def cb_set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # ------------------------------------------------------- premiums / night hours
 
-def _premium_text(user) -> str:
-    return fmt.rtl(
-        "🌙 <b>תוספות שכר</b>\n\n"
-        "יש שני תעריפים בלבד:\n"
-        f"‏• <b>150%</b> — לילה ({_night_label(user)}), שבת וחג\n"
-        "‏• <b>100%</b> — כל השאר\n\n"
-        "אורך המשמרת לא משנה את התעריף. שעה שהיא גם לילה וגם שבת "
-        "נשארת 150% — התוספות לא מצטברות.\n\n"
-        "אם השכר שלך משולם בתעריף אחיד, אפשר לכבות את החישוב."
+def _premium_text(s, user) -> str:
+    day_rate, night_rate = repo.effective_rates(s, user.id, tu.now_local().date())
+    return (
+        T.BANDS_TITLE + "\n\n"
+        + fmt.bands_text(day_rate, night_rate) + "\n\n"
+        + fmt.rtl("שבת וחג גוברים על הפילוח היומי לכל אורך החלון.") + "\n"
+        + fmt.rtl("אם השכר משולם בתעריף אחיד, אפשר לכבות את החישוב.")
     )
 
 
@@ -203,8 +169,8 @@ async def cb_overtime_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     with db.session_scope() as s:
         user = db.get_or_create_user(s, update.effective_user.id)
-        text, apply_ot, label = _premium_text(user), user.apply_overtime, _night_label(user)
-    await _reply(update, text, kb.overtime_menu(apply_ot, label))
+        text, apply_ot = _premium_text(s, user), user.apply_overtime
+    await _reply(update, text, kb.overtime_menu(apply_ot))
 
 
 async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -214,9 +180,9 @@ async def cb_toggle_overtime(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user = db.get_or_create_user(s, update.effective_user.id)
         user.apply_overtime = not user.apply_overtime
         s.flush()
-        now_on, label = user.apply_overtime, _night_label(user)
+        now_on = user.apply_overtime
     text = (T.OT_TOGGLED_ON if now_on else T.OT_TOGGLED_OFF) + "\n\n" + T.RECALC_HINT
-    await _reply(update, text, kb.overtime_menu(now_on, label))
+    await _reply(update, text, kb.overtime_menu(now_on))
 
 
 async def cb_recalculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

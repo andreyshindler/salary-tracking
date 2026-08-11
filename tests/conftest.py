@@ -7,7 +7,9 @@ from salary_bot.core import db, repo
 from salary_bot.core.calendar_service import CalendarService
 
 IL = ZoneInfo("Asia/Jerusalem")
-RATE = 10_000  # 100.00 NIS/hour, in agorot — round numbers make failures readable
+# Deliberately far apart so any amount reveals which base rate was applied.
+RATE = 10_000        # day rate: 100.00 NIS/hour, in agorot
+NIGHT_RATE = 20_000  # night rate: 200.00 NIS/hour
 
 
 def local(y, m, d, hh, mm=0) -> dt.datetime:
@@ -51,7 +53,7 @@ def session(tmp_path):
 @pytest.fixture()
 def user(session):
     u = db.get_or_create_user(session, tg_user_id=42)
-    repo.set_rate(session, u.id, RATE, dt.date(2000, 1, 1))
+    repo.set_rate(session, u.id, RATE, dt.date(2000, 1, 1), NIGHT_RATE)
     session.flush()
     return u
 

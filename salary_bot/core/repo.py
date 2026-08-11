@@ -14,16 +14,27 @@ from . import timeutil as tu
 
 # ------------------------------------------------------------ rate / ceiling
 
-def effective_rate(s: Session, user_id: int, on: dt.date) -> int:
-    """Hourly rate in agorot in force on a date — the latest one that had
-    already taken effect. Never the current rate for an old shift."""
+def effective_rates(s: Session, user_id: int, on: dt.date) -> tuple[int, int]:
+    """(day, night) base rates in agorot in force on a date.
+
+    The latest pair that had already taken effect — never the current rates for
+    an old shift. A night rate of zero means it was never set, in which case the
+    day rate stands in so pricing degrades rather than zeroing out.
+    """
     row = s.execute(
         select(Rate)
         .where(Rate.user_id == user_id, Rate.effective_from <= on)
         .order_by(Rate.effective_from.desc())
         .limit(1)
     ).scalar_one_or_none()
-    return row.hourly_agorot if row else 0
+    if row is None:
+        return 0, 0
+    return row.hourly_agorot, (row.night_agorot or row.hourly_agorot)
+
+
+def effective_rate(s: Session, user_id: int, on: dt.date) -> int:
+    """The day rate alone, for the ceiling maths and the settings screen."""
+    return effective_rates(s, user_id, on)[0]
 
 
 def effective_ceiling(s: Session, user_id: int, on: dt.date) -> int:
@@ -36,14 +47,20 @@ def effective_ceiling(s: Session, user_id: int, on: dt.date) -> int:
     return row.amount_agorot if row else 0
 
 
-def set_rate(s: Session, user_id: int, agorot: int, effective_from: dt.date) -> None:
+def set_rate(s: Session, user_id: int, agorot: int, effective_from: dt.date,
+             night_agorot: int | None = None) -> None:
+    """Record the base rates from a date. ``night_agorot`` defaults to the day
+    rate when not given, so a single-rate arrangement still works."""
+    night = agorot if night_agorot is None else night_agorot
     existing = s.execute(
         select(Rate).where(Rate.user_id == user_id, Rate.effective_from == effective_from)
     ).scalar_one_or_none()
     if existing:
         existing.hourly_agorot = agorot
+        existing.night_agorot = night
     else:
-        s.add(Rate(user_id=user_id, hourly_agorot=agorot, effective_from=effective_from))
+        s.add(Rate(user_id=user_id, hourly_agorot=agorot, night_agorot=night,
+                   effective_from=effective_from))
 
 
 def set_ceiling(s: Session, user_id: int, agorot: int, effective_from: dt.date) -> None:
@@ -108,14 +125,13 @@ def price_and_store(s: Session, user: User, shift: Shift, calendar: CalendarServ
     if shift.end_utc is None:
         raise ValueError("cannot price a shift that has not ended")
 
-    rate = effective_rate(s, user.id, tu.local_date_of(shift.start_utc))
+    day_rate, night_rate = effective_rates(s, user.id, tu.local_date_of(shift.start_utc))
     priced = price_shift(
         start=tu.to_aware_utc(shift.start_utc),
         end=tu.to_aware_utc(shift.end_utc),
-        hourly_agorot=rate,
+        day_agorot=day_rate,
+        night_agorot=night_rate,
         calendar=calendar,
-        night_start_min=user.night_start_min,
-        night_end_min=user.night_end_min,
         apply_premiums=user.apply_overtime,
     )
 
@@ -133,6 +149,7 @@ def price_and_store(s: Session, user: User, shift: Shift, calendar: CalendarServ
                 to_utc=seg.end.replace(tzinfo=None),
                 hours=seg.hours,
                 multiplier=seg.multiplier,
+                rate_agorot=seg.rate_agorot,
                 kind=seg.kind,
                 reason=seg.reason,
                 amount_agorot=seg.amount_agorot,

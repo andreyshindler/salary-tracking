@@ -7,7 +7,7 @@ from salary_bot.config import DEFAULT_CEILING_AGOROT
 from salary_bot.core import ceiling as ceiling_mod
 from salary_bot.core import db, repo
 from salary_bot.core import timeutil as tu
-from tests.conftest import RATE, local, workdays
+from tests.conftest import NIGHT_RATE, RATE, local, workdays
 
 
 def _add(session, user, cal, start, end):
@@ -47,14 +47,14 @@ def test_month_status_totals_and_remaining(session, user, cal):
 
 
 def test_shabbat_hours_are_bucketed_separately(session, user, cal):
-    _add(session, user, cal, local(2026, 9, 18, 16), local(2026, 9, 18, 21, 30))
+    _add(session, user, cal, local(2026, 9, 18, 18), local(2026, 9, 18, 23))
     st = ceiling_mod.month_status(session, user, 2026, 9)
 
     kinds = {t.kind for t in st.tiers}
-    assert kinds == {"regular", "rest"}
-    rest = next(t for t in st.tiers if t.kind == "rest")
+    assert kinds == {"day", "shabbat"}
+    rest = next(t for t in st.tiers if t.kind == "shabbat")
     assert rest.multiplier == 1.5
-    assert rest.hours == pytest.approx(3.05, abs=0.01)
+    assert rest.hours == pytest.approx(3.0, abs=0.01)
 
 
 def test_shifts_are_attributed_to_the_month_they_started_in(session, user, cal):
@@ -158,8 +158,8 @@ def test_reprice_all_applies_the_current_rules(session, user, cal):
     """Segments are stored, so a rules change leaves old shifts on old numbers.
     That is deliberate for auditability — but when the rules were wrong, the
     user needs a correction."""
-    shift = _add(session, user, cal, local(2026, 6, 9, 20), local(2026, 6, 10, 2))
-    assert shift.total_agorot == round(2 * RATE + 4 * 1.5 * RATE)  # 2h day + 4h night
+    shift = _add(session, user, cal, local(2026, 6, 10, 20), local(2026, 6, 11, 2))
+    assert shift.total_agorot == 2 * RATE + 4 * NIGHT_RATE  # 2h day band + 4h night band
 
     # Simulate a flat-rate arrangement being switched on after the fact.
     user.apply_overtime = False
@@ -169,21 +169,22 @@ def test_reprice_all_applies_the_current_rules(session, user, cal):
     assert count == 1
 
     session.refresh(shift)
-    assert shift.total_agorot == 6 * RATE, "the night premium should be gone"
+    assert shift.total_agorot == 6 * RATE, "the night rate should no longer apply"
     assert len(shift.segments) == 1
     assert ceiling_mod.month_status(session, user, 2026, 6).earned_agorot == 6 * RATE
 
 
-def test_reprice_all_follows_a_changed_night_window(session, user, cal):
-    shift = _add(session, user, cal, local(2026, 6, 9, 20), local(2026, 6, 10, 2))
-    assert shift.total_agorot == round(2 * RATE + 4 * 1.5 * RATE)
+def test_reprice_all_follows_a_rate_change(session, user, cal):
+    shift = _add(session, user, cal, local(2026, 6, 10, 20), local(2026, 6, 11, 2))
+    assert shift.total_agorot == 2 * RATE + 4 * NIGHT_RATE
 
-    user.night_start_min = 23 * 60      # night now starts an hour later
+    # A correction to the rates themselves, backdated over the shift.
+    repo.set_rate(session, user.id, RATE * 2, dt.date(2000, 1, 1), NIGHT_RATE * 2)
     session.flush()
     repo.reprice_all(session, user, cal)
 
     session.refresh(shift)
-    assert shift.total_agorot == round(3 * RATE + 3 * 1.5 * RATE)
+    assert shift.total_agorot == 2 * (2 * RATE) + 4 * (2 * NIGHT_RATE)
 
 
 def test_reprice_all_ignores_an_open_shift(session, user, cal):

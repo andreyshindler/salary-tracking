@@ -109,6 +109,20 @@ class CalendarService:
     def is_rest_day(self, day: dt.date) -> bool:
         return self.classify_day(day)[0]
 
+    def rest_kind(self, day: dt.date) -> str | None:
+        """``"chag"``, ``"shabbat"`` or None — the two are paid differently.
+
+        Chag wins when a holiday falls on Shabbat, since it carries the higher
+        rate. Chol hamoed on a Saturday is Shabbat, not chag.
+        """
+        info = HDateInfo(date=day, diaspora=False)
+        names = {h.name for h in info.holidays}
+        if info.is_yom_tov or (names & LABOR_REST_HOLIDAYS):
+            return "chag"
+        if info.is_shabbat:
+            return "shabbat"
+        return None
+
     def holiday_label(self, day: dt.date) -> str:
         """Hebrew holiday name for a date, including non-rest ones like chol
         hamoed — used to annotate the shift list, not to price anything."""
