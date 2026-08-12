@@ -51,10 +51,15 @@ def main_menu(has_open_shift: bool, links: AppLinks = AppLinks()) -> Markup:
     rows = [
         [calendar_button(links.calendar),
          Btn(T.BTN_STATUS, callback_data="st:cur")],
-        [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu"),
-         _app_or_chat(T.BTN_REPORTS, links.reports, "rep:menu")],
-        [Btn(T.BTN_SETTINGS, callback_data="set:menu"), Btn(T.BTN_HELP, callback_data="help")],
+        [_app_or_chat(T.BTN_REPORTS, links.reports, "rep:menu"),
+         Btn(T.BTN_SETTINGS, callback_data="set:menu")],
+        [Btn(T.BTN_HELP, callback_data="help")],
     ]
+    if links.reports is None:
+        # The reports app lists the month's shifts and can delete one. Without
+        # it there is no other way to reach an older shift, so the chat list
+        # earns its place in the menu — and only then.
+        rows.insert(1, [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu")])
     if has_open_shift:
         # A shift left running from before the start buttons went away still
         # has to be closable, so these appear only while one exists.

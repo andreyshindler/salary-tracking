@@ -190,6 +190,21 @@ def build_api(bot, bot_token: str) -> dict:
             calendar = get_calendar(user.city)
             return 200, report_payload.build(s, user, calendar, year, month)
 
+    async def delete(tg_user_id: int, body: dict) -> tuple[int, dict]:
+        try:
+            shift_id = int(body["id"])
+        except (KeyError, TypeError, ValueError):
+            raise Rejected(T.WEBAPP_NO_SUCH_SHIFT)
+        with db.session_scope() as s:
+            user = db.get_or_create_user(s, tg_user_id)
+            # Scoped to the user, so an id belonging to somebody else is simply
+            # not found rather than deleted.
+            shift = repo.get_shift(s, user.id, shift_id)
+            if shift is None:
+                raise Rejected(T.WEBAPP_NO_SUCH_SHIFT)
+            repo.delete_shift(s, shift)
+        return 200, {"message": T.SHIFT_DELETED}
+
     async def export(tg_user_id: int, body: dict) -> tuple[int, dict]:
         year, _ = report_payload.parse_month(body)
         await reports.send_csv(bot, tg_user_id, year or tu.now_local().year)
@@ -198,6 +213,7 @@ def build_api(bot, bot_token: str) -> dict:
     return {
         "shift": authenticated(shift),
         "report": authenticated(report),
+        "delete": authenticated(delete),
         "export": authenticated(export),
     }
 

@@ -117,6 +117,10 @@
   table.rows td { padding: 7px 4px; border-top: 1px solid var(--bg); text-align: right; }
   table.rows td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.rows tr.total td { font-weight: 700; border-top: 2px solid var(--bg); }
+  table.rows button.del {
+    background: none; border: 0; font-size: 17px; padding: 2px 4px; opacity: .55;
+  }
+  table.rows button.del:disabled { opacity: .25; }
 
   .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
   .tabs button {
@@ -482,12 +486,13 @@
       "אין עדיין שעות בחודש הזה.");
 
     document.getElementById("rShifts").innerHTML = rows(
-      "<th>תאריך</th><th>שעות</th><th>סכום</th>",
+      "<th>תאריך</th><th>שעות</th><th>סכום</th><th></th>",
       m.shifts.map(sh => `<tr><td>${esc(sh.date)} ${esc(sh.day)}`
                        + (sh.note ? ` · ${esc(sh.note)}` : "")
                        + `<div class="k" style="color:var(--hint);font-size:12px">${esc(sh.span)}</div></td>`
                        + `<td class="num">${esc(sh.hours)}</td>`
-                       + `<td class="num">${esc(sh.amount)}</td></tr>`),
+                       + `<td class="num">${esc(sh.amount)}</td>`
+                       + `<td><button class="del" data-id="${esc(sh.id)}" aria-label="מחיקה">🗑</button></td></tr>`),
       "אין עדיין משמרות בחודש הזה.");
 
     const y = data.year;
@@ -523,6 +528,30 @@
 
   document.getElementById("rPrev").addEventListener("click", () => stepMonth(-1));
   document.getElementById("rNext").addEventListener("click", () => stepMonth(1));
+
+  // Delegated, because the rows are rebuilt on every render.
+  document.getElementById("rShifts").addEventListener("click", async event => {
+    const button = event.target.closest("button.del");
+    if (!button) return;
+
+    const ok = await new Promise(resolve => {
+      if (tg && tg.showConfirm) tg.showConfirm("למחוק את המשמרת?", resolve);
+      else resolve(window.confirm("למחוק את המשמרת?"));
+    });
+    if (!ok) return;
+
+    button.disabled = true;
+    try {
+      await api("delete", { id: Number(button.dataset.id) });
+    } catch (err) {
+      button.disabled = false;
+      rError.textContent = err.message;
+      rError.classList.add("shown");
+      return;
+    }
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+    loadReport(shown.year, shown.month);
+  });
 
   const tabMonth = document.getElementById("tabMonth");
   const tabYear = document.getElementById("tabYear");

@@ -490,6 +490,76 @@ async def test_a_stranger_cannot_trigger_an_export(aiohttp_client, posting):
     assert bot.documents == []
 
 
+def test_the_menu_drops_the_shift_list_when_the_app_has_it(webapp_env):
+    """המשמרות שלי is in the reports app, so it is not also in the menu."""
+    labels = [b.text for row in common.main_menu_markup(TG_ID).inline_keyboard
+              for b in row]
+    assert not any("המשמרות שלי" in label for label in labels), labels
+
+
+def test_without_the_app_the_shift_list_stays_in_the_menu(bot_env):
+    """It is the only way to reach an older shift when there is no app."""
+    labels = [b.text for row in common.main_menu_markup(TG_ID).inline_keyboard
+              for b in row]
+    assert any("המשמרות שלי" in label for label in labels), labels
+
+
+@pytest.mark.asyncio
+async def test_a_shift_can_be_deleted_from_the_report(aiohttp_client, posting):
+    """Deleting had to move with the list, or it would just be gone."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+    await post_shift(client, signed(),
+                     {"date": "2026-06-10", "start": "09:00", "end": "15:00"})
+
+    report = await (await client.post(
+        "/api/report", json={"initData": signed(), "year": 2026, "month": 6})).json()
+    shift_id = report["month"]["shifts"][0]["id"]
+
+    response = await client.post(
+        "/api/delete", json={"initData": signed(), "id": shift_id})
+    assert response.status == 200
+
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        assert repo.shifts_on_date(s, user.id, dt.date(2026, 6, 10)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_cannot_delete_your_shift(aiohttp_client, posting):
+    """The id is client-supplied, so the lookup is scoped to the caller."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+    await post_shift(client, signed(),
+                     {"date": "2026-06-10", "start": "09:00", "end": "15:00"})
+
+    with db.session_scope() as s:
+        owner = db.get_or_create_user(s, TG_ID)
+        shift_id = repo.shifts_on_date(s, owner.id, dt.date(2026, 6, 10))[0].id
+        # Approved, so this tests the ownership check rather than the gate.
+        stranger = db.get_or_create_user(s, 777)
+        stranger.status = "approved"
+
+    response = await client.post(
+        "/api/delete", json={"initData": signed(777), "id": shift_id})
+    assert response.status == 400
+
+    with db.session_scope() as s:
+        owner = db.get_or_create_user(s, TG_ID)
+        assert len(repo.shifts_on_date(s, owner.id, dt.date(2026, 6, 10))) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{}, {"id": "abc"}, {"id": 999999}])
+async def test_a_bad_delete_is_refused(aiohttp_client, posting, body):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post(
+        "/api/delete", json={"initData": signed(), **body})
+    assert response.status == 400
+
+
 @pytest.mark.asyncio
 async def test_an_unknown_endpoint_is_not_served(aiohttp_client, posting):
     bot, make = posting

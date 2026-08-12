@@ -76,14 +76,18 @@ arrangement.
 
 ```
 🗓 יומן                                  📊 מצב החודש
-🗓 המשמרות שלי                          📈 דוחות
-⚙️ הגדרות                                ❓ עזרה
+📈 דוחות                                 ⚙️ הגדרות
+❓ עזרה
 ```
 
-Everything is entered through the diary, so there is no separate start-a-shift
-or type-it-by-hand button to choose between. A shift left running from an
-earlier version can still be closed with `/shift`, and typing a line straight
-into the chat still records one — those paths simply are not advertised.
+Everything is entered through the diary and read in the reports, so there is no
+separate start-a-shift, type-it-by-hand or browse-my-shifts button to choose
+between. A shift left running from an earlier version can still be closed with
+`/shift`, and typing a line straight into the chat still records one — those
+paths simply are not advertised.
+
+Without a Mini App the menu keeps **🗓 המשמרות שלי**, since the chat list is
+then the only way to reach an older shift.
 
 - **🗓 יומן** opens the **Mini App** on the first tap when one is configured: a
   month calendar with two scrolling time wheels, matching the Telegram theme.
@@ -95,9 +99,9 @@ into the chat still records one — those paths simply are not advertised.
   ceiling, a progress bar, hours split by rate tier, how many more hours you can
   still work, and the date you would cross at the current pace.
 - **📈 דוחות** opens the Mini App on its reports screen: the month's earnings
-  against the ceiling, a tier breakdown, the month's shifts, a year tab, and
-  a CSV export that arrives as a file in the chat. Without a Mini App the same
-  reports are rendered as chat messages.
+  against the ceiling, a tier breakdown, the month's shifts (each deletable),
+  a year tab, and a CSV export that arrives as a file in the chat. Without a
+  Mini App the same reports are rendered as chat messages.
 - Typing a line — `16:00 21:30`, `אתמול 16:00 21:30`, `12/09 16:00 21:30` — is
   still the fastest path for a recent day. An end earlier than the start is read
   as an overnight shift.
@@ -144,10 +148,12 @@ straight back as a breakdown card.
 
 **📈 דוחות** opens the same page on its reports screen: the month's earnings
 against the ceiling with a progress bar, headroom in shekels and in hours, the
-projected crossing date, a breakdown by rate tier, the month's shifts, and a
-year tab. Arrows step through months. **📤 ייצוא CSV** asks the bot to send the
-file to the chat rather than downloading it in the app, because a file in the
-chat is the one that survives the app being closed.
+projected crossing date, a breakdown by rate tier, the month's shifts and a
+year tab. Arrows step through months. Each shift row has a 🗑 that deletes it
+after a confirmation — the shift list moved into the app, so deleting had to
+move with it rather than quietly disappear. **📤 ייצוא CSV** asks the bot to
+send the file to the chat rather than downloading it in the app, because a file
+in the chat is the one that survives the app being closed.
 
 It is **off unless you configure it**, because Telegram refuses to open a Mini
 App over anything but HTTPS with a valid certificate. With `WEBAPP_URL` unset,
@@ -199,8 +205,8 @@ button to press. Telegram does not deliver `sendData` from an inline button, so
 the page calls the bot's own server instead, at `api/…` **relative to the
 page's own address**: hosted at `/salary`, a request goes to
 `/salary/api/report` and stays inside the proxy's location block. The server
-accepts the path with or without the prefix. Three endpoints — `shift`,
-`report`, `export`.
+accepts the path with or without the prefix. Four endpoints — `shift`,
+`report`, `delete`, `export`.
 
 Those POSTs are the only routes into the database that do not arrive through
 Telegram, so they authenticate. Telegram signs the launch parameters with a key

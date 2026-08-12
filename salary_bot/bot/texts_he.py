@@ -114,6 +114,7 @@ KEYBOARD_REMOVED = (
 )
 
 WEBAPP_EXPORT_SENT = "📤 הקובץ נשלח לצ׳אט."
+WEBAPP_NO_SUCH_SHIFT = "המשמרת הזו כבר לא קיימת. רענן את הדוח."
 WEBAPP_UNVERIFIED = "היומן נפתח בלי זיהוי תקין. סגור אותו ופתח מחדש מהתפריט."
 WEBAPP_NO_ACCESS = "אין לך הרשאה לרשום שעות. פנה למנהל הבוט."
 ASK_DAY_HOURS = (
