@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
-from telegram import Update
+from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
@@ -189,9 +189,37 @@ def main_menu_markup(tg_user_id: int):
     return kb.main_menu(has_open, app_links())
 
 
+async def drop_stale_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Take away the reply keyboard an earlier version left behind.
+
+    Telegram keeps a reply keyboard on the phone until a message removes it —
+    ``one_time_keyboard`` only collapses it — so the old 📅 פתיחת היומן button
+    would sit under the input field forever. The removal has to ride on a
+    message, so it goes out once, carrying an explanation of the change rather
+    than being a blank line of noise.
+    """
+    tg_id = update.effective_user.id
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, tg_id)
+        if user.keyboard_cleared:
+            return
+        user.keyboard_cleared = True
+
+    try:
+        await context.bot.send_message(
+            update.effective_chat.id, T.KEYBOARD_REMOVED,
+            reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        # Not worth failing the menu over; the next /start will try again only
+        # if this one never marked it done, so at worst the button lingers.
+        log.exception("Could not remove the stale reply keyboard for %s", tg_id)
+
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     clear_awaiting(context)
     tg_id = update.effective_user.id
+    await drop_stale_keyboard(update, context)
     markup = main_menu_markup(tg_id)
 
     if update.callback_query:
@@ -208,6 +236,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     tg_id = update.effective_user.id
+    await drop_stale_keyboard(update, context)
     with db.session_scope() as s:
         user = db.get_or_create_user(s, tg_id)
         rate = repo.effective_rate(s, user.id, dt.date.today())

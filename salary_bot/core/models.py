@@ -42,6 +42,11 @@ class User(Base):
     tg_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tg_first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
+    # An earlier version opened the Mini App from a reply keyboard, which stays
+    # on the phone until the bot explicitly takes it away. Removing it needs a
+    # message, so it is done once and remembered rather than on every menu.
+    keyboard_cleared: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Settings live inline: this is a single-user bot, so a separate settings
     # table would be a join for nothing.
     # Night premium window, in minutes from local midnight. Defaults to

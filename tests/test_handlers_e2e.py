@@ -68,6 +68,33 @@ async def test_start_command_renders_the_main_menu(bot_env, ctx):
 
 
 @pytest.mark.asyncio
+async def test_start_takes_away_the_old_reply_keyboard(bot_env, ctx):
+    """An earlier version left a 📅 פתיחת היומן button under the input field,
+    and Telegram keeps one until a message removes it."""
+    from telegram import ReplyKeyboardRemove
+
+    await common.cmd_start(FakeUpdate(text="/start"), ctx)
+
+    removals = [m for m in ctx.bot.sent
+                if isinstance(m["reply_markup"], ReplyKeyboardRemove)]
+    assert len(removals) == 1, "the removal must actually be sent"
+
+
+@pytest.mark.asyncio
+async def test_the_keyboard_removal_is_sent_only_once(bot_env, ctx):
+    """It carries an explanation, so repeating it on every menu would nag."""
+    from telegram import ReplyKeyboardRemove
+
+    for _ in range(3):
+        await common.cmd_start(FakeUpdate(text="/start"), ctx)
+        await common.cb_main(FakeUpdate(callback="m:main"), ctx)
+
+    removals = [m for m in ctx.bot.sent
+                if isinstance(m["reply_markup"], ReplyKeyboardRemove)]
+    assert len(removals) == 1, [m["text"] for m in removals]
+
+
+@pytest.mark.asyncio
 async def test_help_renders_the_rate_table(bot_env, ctx):
     update = FakeUpdate(text="/help")
     await common.cmd_help(update, ctx)
