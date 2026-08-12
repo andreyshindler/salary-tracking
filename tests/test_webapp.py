@@ -237,3 +237,47 @@ async def test_a_plain_http_url_is_treated_as_disabled(bot_env, ctx):
     """Telegram refuses to open anything but HTTPS, so it must not be offered."""
     common.set_config(_config(bot_env, "http://bot.example.com"))
     assert await webapp.open_app(FakeUpdate(text="/calendar"), ctx) is False
+
+
+# ------------------------------------------------------- path-prefixed hosting
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/", "/salary", "/salary/", "/anything/deep"])
+async def test_the_page_is_served_under_any_path(aiohttp_client, path):
+    """Hosting at a subpath forwards either "/" or "/salary/" depending on
+    whether the proxy strips the prefix, and the server cannot tell which."""
+    client = await aiohttp_client(webserver.build_app())
+    response = await client.get(path)
+    assert response.status == 200
+    assert "telegram-web-app.js" in await response.text()
+
+
+@pytest.mark.asyncio
+async def test_healthz_is_not_swallowed_by_the_catch_all(aiohttp_client):
+    client = await aiohttp_client(webserver.build_app())
+    response = await client.get("/healthz")
+    assert await response.text() == "ok"
+
+
+def test_a_prefixed_url_keeps_its_path(tmp_path):
+    """WEBAPP_URL=https://host/salary must produce https://host/salary/?rest=..."""
+    from salary_bot.config import Config
+
+    config = Config(
+        bot_token="1:x", allowed_user_ids=frozenset({TG_ID}),
+        db_path=tmp_path / "b.db", log_level="INFO",
+        webapp_url="https://srv1515969.hstgr.cloud/salary",
+    )
+    common.set_config(config)
+    url = webapp.webapp_url(FakeContext(), "tel_aviv")
+    assert url.startswith("https://srv1515969.hstgr.cloud/salary/?rest=")
+
+
+def test_a_trailing_slash_is_not_doubled(tmp_path, monkeypatch):
+    from salary_bot.config import load_config
+
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("ALLOWED_USER_IDS", "1")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "b.db"))
+    monkeypatch.setenv("WEBAPP_URL", "https://srv1515969.hstgr.cloud/salary/")
+    assert load_config().webapp_url == "https://srv1515969.hstgr.cloud/salary"

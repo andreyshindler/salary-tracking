@@ -41,8 +41,15 @@ async def _health(_request: web.Request) -> web.Response:
 def build_app() -> web.Application:
     app = web.Application()
     app.add_routes([
-        web.get("/", _index),
         web.get("/healthz", _health),
+        web.get("/", _index),
+        # Catch-all, so a path-prefixed deployment works whichever way the
+        # reverse proxy is configured. Hosting the app at /salary either
+        # forwards "/" (prefix stripped) or "/salary/" (preserved), and there
+        # is no way to tell from here — serving the page for any path makes
+        # both correct. It is a single self-contained file with no assets, so
+        # there is nothing else a request could legitimately be asking for.
+        web.get("/{tail:.*}", _index),
     ])
     return app
 

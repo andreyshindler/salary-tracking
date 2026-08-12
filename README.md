@@ -150,6 +150,26 @@ bot.example.com {
 }
 ```
 
+**A subpath works too** — `WEBAPP_URL=https://example.com/salary`. The server
+answers on any path, so it does not matter whether the proxy strips the prefix
+or forwards it:
+
+```
+example.com {
+    handle_path /salary/* {          # strips the prefix
+        reverse_proxy 127.0.0.1:8080
+    }
+}
+```
+
+or with nginx:
+
+```nginx
+location /salary/ {
+    proxy_pass http://127.0.0.1:8080/;
+}
+```
+
 Then `docker compose up -d` and open 🗓 יומן.
 
 **How the data comes back.** The page returns its result through Telegram's
