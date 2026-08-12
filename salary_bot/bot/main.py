@@ -40,7 +40,8 @@ async def _post_init(app: Application) -> None:
     if config is not None and config.webapp_enabled:
         # Runs in the bot's own loop: one process, one thing to supervise.
         app.bot_data["webapp_runner"] = await webserver.start(
-            config.webapp_host, config.webapp_port
+            config.webapp_host, config.webapp_port,
+            submit=webapp.submitter(app.bot, config.bot_token),
         )
         log.info("Mini App enabled at %s", config.webapp_url)
     else:

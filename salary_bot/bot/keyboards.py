@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton as Btn
 from telegram import InlineKeyboardMarkup as Markup
+from telegram import WebAppInfo
 
 from ..core.cities import CITIES
 from ..core.models import Shift
@@ -16,7 +17,19 @@ from .formatting import shift_button_label
 CB_MAIN = "m:main"
 
 
-def main_menu(has_open_shift: bool) -> Markup:
+def calendar_button(calendar_url: str | None) -> Btn:
+    """The diary opens the Mini App on the first tap when it is configured.
+
+    A ``web_app`` button launches the app directly, so there is no intermediate
+    message with a second button to press. Without an HTTPS address there is no
+    app to launch and the button falls back to the inline month grid.
+    """
+    if calendar_url:
+        return Btn(T.BTN_CALENDAR, web_app=WebAppInfo(url=calendar_url))
+    return Btn(T.BTN_CALENDAR, callback_data="cal:today")
+
+
+def main_menu(has_open_shift: bool, calendar_url: str | None = None) -> Markup:
     """The open-shift button replaces the start button rather than sitting
     beside it — only one of the two is ever a valid action."""
     toggle = (
@@ -26,7 +39,7 @@ def main_menu(has_open_shift: bool) -> Markup:
     )
     rows = [
         [toggle, Btn(T.BTN_MANUAL, callback_data="man:new")],
-        [Btn(T.BTN_CALENDAR, callback_data="cal:today"),
+        [calendar_button(calendar_url),
          Btn(T.BTN_STATUS, callback_data="st:cur")],
         [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu"), Btn(T.BTN_REPORTS, callback_data="rep:menu")],
         [Btn(T.BTN_SETTINGS, callback_data="set:menu"), Btn(T.BTN_HELP, callback_data="help")],
@@ -36,6 +49,14 @@ def main_menu(has_open_shift: bool) -> Markup:
     else:
         rows[0].insert(1, Btn(T.BTN_START_EARLIER, callback_data="sh:earlier"))
     return Markup(rows)
+
+
+def open_webapp(calendar_url: str) -> Markup:
+    """For /calendar, where there is no menu button to attach the app to."""
+    return Markup([
+        [Btn(T.BTN_OPEN_WEBAPP, web_app=WebAppInfo(url=calendar_url))],
+        [Btn(T.BTN_BACK, callback_data=CB_MAIN)],
+    ])
 
 
 def back_only() -> Markup:

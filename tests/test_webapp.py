@@ -1,7 +1,9 @@
-"""The Mini App: the served page, the payload it returns, and the fallback.
+"""The Mini App: the served page, the submission it posts back, and the fallback.
 
 The payload is JSON built by a page running on the user's phone, so it is
-treated as untrusted input and validated rather than believed.
+treated as untrusted input and validated rather than believed — and since it
+arrives over a public HTTP endpoint rather than through Telegram, so is the
+identity attached to it.
 """
 from __future__ import annotations
 
@@ -11,22 +13,26 @@ import re
 
 import pytest
 
+from salary_bot.bot import keyboards as kb
 from salary_bot.bot import webserver
 from salary_bot.bot.handlers import calendar as cal_handlers
 from salary_bot.bot.handlers import common
 from salary_bot.bot.handlers import webapp
 from salary_bot.core import db, repo
 from tests.conftest import NIGHT_RATE, RATE
-from tests.stubs import TG_ID, FakeContext, FakeUpdate, callback_data, last_output
+from tests.stubs import TG_ID, FakeBot, FakeContext, FakeUpdate, callback_data
+from tests.stubs import last_output
+from tests.test_webauth import launch
 
 WEBAPP_URL = "https://bot.example.com"
+TOKEN = "123:FAKE"
 
 
 def _config(tmp_path, url: str = ""):
     from salary_bot.config import Config
 
     return Config(
-        bot_token="123:FAKE",
+        bot_token=TOKEN,
         allowed_user_ids=frozenset({TG_ID}),
         db_path=tmp_path / "bot.db",
         log_level="INFO",
@@ -57,6 +63,10 @@ def ctx():
     return FakeContext()
 
 
+def bot_texts(bot: FakeBot) -> list[str]:
+    return [text for _, text in bot.messages]
+
+
 # ------------------------------------------------------------------ the page
 
 @pytest.mark.asyncio
@@ -69,7 +79,7 @@ async def test_the_page_is_served(aiohttp_client):
     assert "telegram-web-app.js" in body, "the Telegram bridge must be loaded"
     assert 'dir="rtl"' in body
     assert "scroll-snap-type" in body, "the hour wheels rely on scroll snapping"
-    assert "sendData" in body
+    assert "api/shift" in body, "the page must post its result back to the bot"
 
 
 @pytest.mark.asyncio
@@ -91,6 +101,48 @@ def test_the_page_has_no_external_dependencies_beyond_telegram():
     html = (webserver.WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
     externals = re.findall(r'(?:src|href)="(https?://[^"]+)"', html)
     assert externals == ["https://telegram.org/js/telegram-web-app.js"], externals
+
+
+def test_the_page_posts_inside_its_own_directory():
+    """Hosting at /salary must not produce a request to /api/shift, which the
+    reverse proxy would never route to this server."""
+    html = (webserver.WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'location.pathname.endsWith("/")' in html
+    assert '"/api/shift"' not in html, "an absolute path would escape the prefix"
+
+
+# ------------------------------------------------------- opening it, one tap
+
+def test_the_menu_diary_button_opens_the_app_directly(webapp_env):
+    """One press, no intermediate message with a second button."""
+    markup = common.main_menu_markup(TG_ID)
+    diary = [b for row in markup.inline_keyboard for b in row if "יומן" in b.text][0]
+    assert diary.web_app is not None, "the diary must launch the app itself"
+    assert diary.web_app.url.startswith(WEBAPP_URL)
+    assert diary.callback_data is None
+
+
+def test_without_the_app_the_diary_button_opens_the_grid(bot_env):
+    markup = common.main_menu_markup(TG_ID)
+    diary = [b for row in markup.inline_keyboard for b in row if "יומן" in b.text][0]
+    assert diary.web_app is None
+    assert diary.callback_data == "cal:today"
+
+
+def test_the_url_carries_the_coming_chag_days(webapp_env):
+    """So the app can mark them before a date is picked."""
+    url = common.calendar_url()
+    assert re.search(r"rest=\d{4}-\d{2}-\d{2}", url)
+
+
+@pytest.mark.asyncio
+async def test_the_command_offers_a_web_app_button(webapp_env, ctx):
+    """/calendar has no menu button to hang the app on, so it sends one."""
+    assert await webapp.open_app(FakeUpdate(text="/calendar"), ctx) is True
+
+    button = ctx.bot.sent[-1]["reply_markup"].inline_keyboard[0][0]
+    assert button.web_app is not None
+    assert button.web_app.url.startswith(WEBAPP_URL)
 
 
 # --------------------------------------------------------------- the payload
@@ -116,91 +168,150 @@ def test_valid_payload_is_parsed():
     json.dumps({"date": "2026-06-10", "start": "09:00", "end": "17:00; DROP TABLE"}),
 ])
 def test_malformed_payloads_are_rejected(payload):
-    with pytest.raises(ValueError):
+    with pytest.raises(webapp.Rejected):
         webapp.parse_payload(payload)
 
 
 def test_implausible_dates_are_rejected():
     """A date decades out is a broken or tampered payload, not an entry."""
     for bad in ["1990-01-01", "2400-01-01"]:
-        with pytest.raises(ValueError):
+        with pytest.raises(webapp.Rejected):
             webapp.parse_payload(
                 json.dumps({"date": bad, "start": "09:00", "end": "17:00"})
             )
 
 
-# ------------------------------------------------------------------ the flow
+# ------------------------------------------------------- submitting over HTTP
+
+@pytest.fixture()
+def posting(webapp_env):
+    """A client posting to the real endpoint, and the bot it answers through."""
+    bot = FakeBot()
+
+    async def make(aiohttp_client):
+        app = webserver.build_app(webapp.submitter(bot, TOKEN))
+        return await aiohttp_client(app)
+
+    return bot, make
+
+
+def signed(user_id: int = TG_ID, token: str = TOKEN) -> str:
+    """A launch string signed with this bot's token, dated now."""
+    return launch(user_id=user_id, at=dt.datetime.now(dt.timezone.utc), token=token)
+
+
+async def post_shift(client, init_data: str, shift: dict, path="/api/shift"):
+    return await client.post(path, json={"initData": init_data, "shift": json.dumps(shift)})
+
 
 @pytest.mark.asyncio
-async def test_opening_offers_a_web_app_button_when_configured(webapp_env, ctx):
-    update = FakeUpdate(text="/calendar")
-    assert await webapp.open_app(update, ctx) is True
+async def test_a_signed_submission_records_the_shift(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
 
-    sent = ctx.bot.sent[-1]
-    button = sent["reply_markup"].keyboard[0][0]
-    assert button.web_app is not None, "sendData needs a reply-keyboard web_app button"
-    assert button.web_app.url.startswith(WEBAPP_URL)
+    response = await post_shift(
+        client, signed(),
+        {"date": "2026-06-10", "start": "09:00", "end": "15:00"},
+    )
+    assert response.status == 200
 
-
-@pytest.mark.asyncio
-async def test_the_url_carries_the_coming_chag_days(webapp_env, ctx):
-    """So the app can mark them before a date is picked."""
-    update = FakeUpdate(text="/calendar")
-    await webapp.open_app(update, ctx)
-    url = ctx.bot.sent[-1]["reply_markup"].keyboard[0][0].web_app.url
-    assert "rest=" in url
-    assert re.search(r"rest=\d{4}-\d{2}-\d{2}", url)
-
-
-@pytest.mark.asyncio
-async def test_submitting_records_the_shift(webapp_env, ctx):
-    update = FakeUpdate(web_app_data=json.dumps(
-        {"date": "2026-06-10", "start": "09:00", "end": "15:00"}
-    ))
-    await webapp.handle_data(update, ctx)
-
-    assert "סה״כ המשמרת" in last_output(update)
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
         shifts = repo.shifts_on_date(s, user.id, dt.date(2026, 6, 10))
         assert len(shifts) == 1
         assert shifts[0].total_agorot == 6 * RATE
 
+    assert any("סה״כ המשמרת" in text for text in bot_texts(bot)), \
+        "the breakdown must reach the user, since the page only closes itself"
+
 
 @pytest.mark.asyncio
-async def test_an_end_before_the_start_means_overnight(webapp_env, ctx):
-    update = FakeUpdate(web_app_data=json.dumps(
-        {"date": "2026-06-10", "start": "22:00", "end": "04:00"}
-    ))
-    await webapp.handle_data(update, ctx)
+async def test_an_unsigned_submission_records_nothing(aiohttp_client, posting):
+    """Anyone can reach this URL; only Telegram can sign for a user."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await post_shift(
+        client, "user=%7B%22id%22%3A111%7D&auth_date=1&hash=deadbeef",
+        {"date": "2026-06-10", "start": "09:00", "end": "15:00"},
+    )
+    assert response.status == 401
 
     with db.session_scope() as s:
-        user = db.get_or_create_user(s, TG_ID)
-        shift = repo.shifts_on_date(s, user.id, dt.date(2026, 6, 10))[0]
-        assert sum(seg.hours for seg in shift.segments) == 6.0
+        assert repo.recent_shifts(s, 1) == []
+    assert bot.messages == []
 
 
 @pytest.mark.asyncio
-async def test_a_garbage_payload_records_nothing(webapp_env, ctx):
-    update = FakeUpdate(web_app_data='{"date": "oops"}')
-    await webapp.handle_data(update, ctx)
+async def test_a_submission_signed_with_another_token_records_nothing(
+    aiohttp_client, posting
+):
+    """Guards against the endpoint accepting any well-formed initData."""
+    bot, make = posting
+    client = await make(aiohttp_client)
 
-    assert "לא הצלחתי" in last_output(update)
+    forged = signed(token="999:not-the-bot-token")
+    response = await post_shift(
+        client, forged, {"date": "2026-06-10", "start": "09:00", "end": "15:00"},
+    )
+    assert response.status == 401
+
+    with db.session_scope() as s:
+        assert repo.recent_shifts(s, 1) == []
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_with_a_real_signature_is_still_refused(
+    aiohttp_client, posting
+):
+    """A signed launch proves who you are, not that you are allowed in."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await post_shift(
+        client, signed(999),
+        {"date": "2026-06-10", "start": "09:00", "end": "15:00"},
+    )
+    assert response.status == 403
+
+    with db.session_scope() as s:
+        stranger = db.get_or_create_user(s, 999)
+        assert repo.recent_shifts(s, stranger.id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_garbage_payload_from_a_real_user_records_nothing(
+    aiohttp_client, posting
+):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await post_shift(
+        client, signed(),
+        {"date": "oops"},
+    )
+    assert response.status == 400
+    assert "לא הצלחתי" in (await response.json())["message"]
+
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
         assert repo.recent_shifts(s, user.id) == []
 
 
 @pytest.mark.asyncio
-async def test_overlapping_hours_are_refused(webapp_env, ctx):
-    payload = json.dumps({"date": "2026-06-10", "start": "09:00", "end": "15:00"})
-    await webapp.handle_data(FakeUpdate(web_app_data=payload), ctx)
+async def test_overlapping_hours_are_refused(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+    launch_data = signed()
 
-    clash = FakeUpdate(web_app_data=json.dumps(
-        {"date": "2026-06-10", "start": "14:00", "end": "18:00"}
-    ))
-    await webapp.handle_data(clash, ctx)
-    assert "חופפת" in last_output(clash)
+    first = await post_shift(
+        client, launch_data, {"date": "2026-06-10", "start": "09:00", "end": "15:00"})
+    assert first.status == 200
+
+    clash = await post_shift(
+        client, launch_data, {"date": "2026-06-10", "start": "14:00", "end": "18:00"})
+    assert clash.status == 400
+    assert "חופפת" in (await clash.json())["message"]
 
     with db.session_scope() as s:
         user = db.get_or_create_user(s, TG_ID)
@@ -208,7 +319,77 @@ async def test_overlapping_hours_are_refused(webapp_env, ctx):
 
 
 @pytest.mark.asyncio
-async def test_a_stranger_cannot_submit(webapp_env, ctx):
+async def test_an_end_before_the_start_means_overnight(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    await post_shift(
+        client, signed(),
+        {"date": "2026-06-10", "start": "22:00", "end": "04:00"},
+    )
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        shift = repo.shifts_on_date(s, user.id, dt.date(2026, 6, 10))[0]
+        assert sum(seg.hours for seg in shift.segments) == 6.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/shift", "/salary/api/shift"])
+async def test_the_endpoint_answers_with_or_without_the_path_prefix(
+    aiohttp_client, posting, path
+):
+    """Whether the proxy strips /salary is not something this server can see."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await post_shift(
+        client, signed(),
+        {"date": "2026-06-10", "start": "09:00", "end": "15:00"}, path=path,
+    )
+    assert response.status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    "not json", "[]", '{"shift": "{}"}', '{"initData": 5, "shift": "{}"}',
+])
+async def test_a_malformed_request_body_is_rejected(aiohttp_client, posting, body):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post(
+        "/api/shift", data=body, headers={"Content-Type": "application/json"})
+    assert response.status == 400
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_body_is_dropped(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post("/api/shift", data="x" * (webserver.MAX_BODY_BYTES + 1))
+    assert response.status in (400, 413)
+    assert bot.messages == []
+
+
+# ----------------------------------------- sendData, from a stale keyboard
+
+@pytest.mark.asyncio
+async def test_a_leftover_reply_keyboard_still_records(webapp_env, ctx):
+    """A one-time keyboard from an older version can outlive it on a phone."""
+    update = FakeUpdate(web_app_data=json.dumps(
+        {"date": "2026-06-10", "start": "09:00", "end": "15:00"}
+    ))
+    await webapp.handle_data(update, ctx)
+
+    assert any("סה״כ המשמרת" in text for text in bot_texts(ctx.bot))
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        assert len(repo.shifts_on_date(s, user.id, dt.date(2026, 6, 10))) == 1
+
+
+@pytest.mark.asyncio
+async def test_sent_data_from_a_stranger_records_nothing(webapp_env, ctx):
     update = FakeUpdate(
         web_app_data=json.dumps({"date": "2026-06-10", "start": "09:00", "end": "15:00"}),
         user_id=999,
@@ -217,6 +398,17 @@ async def test_a_stranger_cannot_submit(webapp_env, ctx):
 
     with db.session_scope() as s:
         assert repo.recent_shifts(s, 1) == []
+
+
+@pytest.mark.asyncio
+async def test_sent_garbage_is_reported(webapp_env, ctx):
+    update = FakeUpdate(web_app_data='{"date": "oops"}')
+    await webapp.handle_data(update, ctx)
+
+    assert "לא הצלחתי" in last_output(update)
+    with db.session_scope() as s:
+        user = db.get_or_create_user(s, TG_ID)
+        assert repo.recent_shifts(s, user.id) == []
 
 
 # --------------------------------------------------------------- the fallback
@@ -237,6 +429,7 @@ async def test_a_plain_http_url_is_treated_as_disabled(bot_env, ctx):
     """Telegram refuses to open anything but HTTPS, so it must not be offered."""
     common.set_config(_config(bot_env, "http://bot.example.com"))
     assert await webapp.open_app(FakeUpdate(text="/calendar"), ctx) is False
+    assert kb.calendar_button(common.calendar_url()).callback_data == "cal:today"
 
 
 # ------------------------------------------------------- path-prefixed hosting
@@ -269,8 +462,7 @@ def test_a_prefixed_url_keeps_its_path(tmp_path):
         webapp_url="https://srv1515969.hstgr.cloud/salary",
     )
     common.set_config(config)
-    url = webapp.webapp_url(FakeContext(), "tel_aviv")
-    assert url.startswith("https://srv1515969.hstgr.cloud/salary/?rest=")
+    assert common.calendar_url().startswith("https://srv1515969.hstgr.cloud/salary/?rest=")
 
 
 def test_a_trailing_slash_is_not_doubled(tmp_path, monkeypatch):

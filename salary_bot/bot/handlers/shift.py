@@ -15,7 +15,8 @@ from .. import formatting as fmt
 from .. import keyboards as kb
 from .. import texts_he as T
 from .common import (
-    clear_awaiting, get_calendar, guard, main_menu_markup, safe_edit, set_awaiting,
+    calendar_url, clear_awaiting, get_calendar, guard, main_menu_markup,
+    safe_edit, set_awaiting,
 )
 
 MAX_SHIFT_HOURS = 24
@@ -45,11 +46,11 @@ async def start_shift_at(update: Update, context: ContextTypes.DEFAULT_TYPE,
             text = T.SHIFT_ALREADY_OPEN.format(
                 start=tu.to_local(existing.start_utc).strftime("%d.%m %H:%M")
             )
-            await _reply(update, text, kb.main_menu(True))
+            await _reply(update, text, kb.main_menu(True, calendar_url()))
             return
 
         if start_utc > tu.now_utc():
-            await _reply(update, T.SHIFT_START_IN_FUTURE, kb.main_menu(False))
+            await _reply(update, T.SHIFT_START_IN_FUTURE, kb.main_menu(False, calendar_url()))
             return
 
         calendar = get_calendar(user.city)
@@ -62,7 +63,7 @@ async def start_shift_at(update: Update, context: ContextTypes.DEFAULT_TYPE,
     text = T.SHIFT_STARTED.format(
         start=tu.to_local(start_utc).strftime("%H:%M"), tier=tier
     )
-    await _reply(update, text, kb.main_menu(True))
+    await _reply(update, text, kb.main_menu(True, calendar_url()))
 
 
 async def cb_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -91,12 +92,12 @@ async def cb_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = db.get_or_create_user(s, tg_id)
         shift = repo.open_shift(s, user.id)
         if shift is None:
-            await _reply(update, T.SHIFT_NONE_OPEN, kb.main_menu(False))
+            await _reply(update, T.SHIFT_NONE_OPEN, kb.main_menu(False, calendar_url()))
             return
 
         end_utc = tu.now_utc()
         if (end_utc - shift.start_utc) > dt.timedelta(hours=MAX_SHIFT_HOURS):
-            await _reply(update, T.SHIFT_TOO_LONG, kb.main_menu(True))
+            await _reply(update, T.SHIFT_TOO_LONG, kb.main_menu(True, calendar_url()))
             return
 
         calendar = get_calendar(user.city)
@@ -152,10 +153,10 @@ async def cb_cancel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user = db.get_or_create_user(s, update.effective_user.id)
         shift = repo.open_shift(s, user.id)
         if shift is None:
-            await _reply(update, T.SHIFT_NONE_OPEN, kb.main_menu(False))
+            await _reply(update, T.SHIFT_NONE_OPEN, kb.main_menu(False, calendar_url()))
             return
         repo.delete_shift(s, shift)
-    await _reply(update, T.SHIFT_CANCELLED, kb.main_menu(False))
+    await _reply(update, T.SHIFT_CANCELLED, kb.main_menu(False, calendar_url()))
 
 
 async def cmd_shift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

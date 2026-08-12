@@ -9,8 +9,9 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from ...config import Config
+from ...config import DEFAULT_CITY, Config
 from ...core import access, db, repo
+from ...core import timeutil as tu
 from ...core.calendar_service import CalendarService
 from ...core.cities import get_city
 from .. import formatting
@@ -41,6 +42,31 @@ def get_calendar(city_key: str) -> CalendarService:
 
 def _bootstrap_ids() -> frozenset[int]:
     return CONFIG.allowed_user_ids if CONFIG else frozenset()
+
+
+# How far ahead the Mini App is told about חג, so those days are marked before
+# one is picked.
+REST_LOOKAHEAD_DAYS = 120
+
+
+def calendar_url() -> str | None:
+    """The Mini App's address, or None when no HTTPS address is configured and
+    the inline grid stands in for it.
+
+    Deliberately needs neither a user nor a database read: it is called on
+    every main-menu render, and which dates are חג is the same for everyone.
+    """
+    if CONFIG is None or not CONFIG.webapp_enabled:
+        return None
+
+    calendar = get_calendar(DEFAULT_CITY)
+    today = tu.now_local().date()
+    rest = [
+        (today + dt.timedelta(days=offset)).isoformat()
+        for offset in range(-31, REST_LOOKAHEAD_DAYS)
+        if calendar.rest_kind(today + dt.timedelta(days=offset)) == "chag"
+    ]
+    return f"{CONFIG.webapp_url}/?rest={','.join(rest)}"
 
 
 async def _send(update: Update, text: str, markup=None) -> None:
@@ -149,7 +175,7 @@ def main_menu_markup(tg_user_id: int):
     with db.session_scope() as s:
         user = db.get_or_create_user(s, tg_user_id)
         has_open = repo.open_shift(s, user.id) is not None
-    return kb.main_menu(has_open)
+    return kb.main_menu(has_open, calendar_url())
 
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -84,8 +84,9 @@ arrangement.
 - **📊 מצב החודש** is the headline screen: earned so far, remaining until the
   ceiling, a progress bar, hours split by rate tier, how many more hours you can
   still work, and the date you would cross at the current pace.
-- **🗓 יומן** opens the **Mini App** when one is configured: a month calendar
-  with two scrolling time wheels, matching the Telegram theme. Without a public
+- **🗓 יומן** opens the **Mini App** on the first tap when one is configured: a
+  month calendar with two scrolling time wheels, matching the Telegram theme.
+  Without a public
   HTTPS address it falls back to an inline month grid — laid out right to left
   with ראשון on the right, marking days that already have hours (`•`), חג (`✡`)
   so the 200% days are visible in advance, and today in brackets.
@@ -125,10 +126,10 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 
 ## The Mini App
 
-**🗓 יומן** can open a proper calendar inside Telegram: tap a date, spin the
-hour and minute wheels for start and end, and the shift comes straight back as
-a breakdown card. It uses Telegram's own theme colours, so it matches the client
-in light and dark.
+**🗓 יומן** opens a proper calendar inside Telegram on the first tap: pick a
+date, spin the hour and minute wheels for start and end, and the shift comes
+straight back as a breakdown card. It uses Telegram's own theme colours, so it
+matches the client in light and dark.
 
 It is **off unless you configure it**, because Telegram refuses to open a Mini
 App over anything but HTTPS with a valid certificate. With `WEBAPP_URL` unset,
@@ -174,17 +175,28 @@ by hand.
 
 Then `docker compose up -d` and open 🗓 יומן.
 
-**How the data comes back.** The page returns its result through Telegram's
-`sendData`, not through an API call to the server — so the web server is static
-only, never receives user data, and needs no authentication of its own.
-`sendData` works only from a **reply-keyboard** `web_app` button (Telegram does
-not deliver it from inline buttons), which is why opening the app sends a
-one-shot keyboard that is removed once the data arrives.
+**How the data comes back.** 🗓 יומן in the main menu is itself a `web_app`
+button, so the first tap opens the calendar — there is no intermediate message
+with a second button to press. Telegram does not deliver `sendData` from an
+inline button, so the page posts its result to the bot's own server instead, at
+`api/shift` **relative to the page's own address**: hosted at `/salary`, the
+request goes to `/salary/api/shift` and stays inside the proxy's location
+block. The server accepts it with or without the prefix.
+
+That POST is the one route into the database that does not arrive through
+Telegram, so it authenticates. Telegram signs the launch parameters with a key
+derived from the bot token; `salary_bot/core/webauth.py` recomputes the HMAC
+and refuses anything unsigned, signed with a different token, tampered with,
+timestamped more than 24 hours away, or naming no user. A valid signature only
+proves *which* account is posting — access control is applied on top of it, so
+an unapproved user is refused exactly as they would be in chat.
 
 The returned JSON is built by a page on your phone, so it is validated rather
 than trusted: shape, date format, `HH:MM` times, and a plausible date range are
 all checked before anything reaches the pricing engine. Overlap rejection and
-the ceiling alert are shared with every other entry path.
+the ceiling alert are shared with every other entry path. If the POST cannot
+get through, the app says so on screen with the status code rather than closing
+as though the shift had been saved.
 
 ## Access control
 
@@ -348,6 +360,7 @@ salary_bot/
 │   ├── ceiling.py            # monthly totals vs the ceiling
 │   ├── repo.py               # data access, versioned rate/ceiling lookups
 │   ├── parsing.py            # free-text input
+│   ├── webauth.py            # verifies Telegram's signature on Mini App posts
 │   └── models.py, db.py, timeutil.py, cities.py
 ├── webapp/
 │   └── index.html            # the Mini App: calendar + hour wheels

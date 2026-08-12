@@ -86,6 +86,14 @@
 
   .summary { text-align: center; font-size: 15px; padding: 4px 0 0; }
   .summary .muted { color: var(--hint); font-size: 13px; }
+
+  /* Hidden until something goes wrong. A silent failure here would look like
+     the shift was saved when it was not. */
+  .error {
+    display: none; margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+    background: #b3261e; color: #ffffff; font-size: 14px; line-height: 1.4;
+  }
+  .error.shown { display: block; }
   .warn { color: #d1453b; }
 </style>
 </head>
@@ -119,6 +127,7 @@
     </div>
   </div>
   <div class="summary" id="summary"></div>
+  <div class="error" id="error"></div>
 </div>
 
 <script>
@@ -284,13 +293,55 @@
     }
   }
 
-  if (tg && tg.MainButton) {
-    tg.MainButton.onClick(() => {
-      const { start, end } = times();
-      tg.sendData(JSON.stringify({ date: iso(selected), start, end }));
-      tg.close();
-    });
+  // ------------------------------------------------------------- submitting
+  // The app is launched from an inline button, and Telegram does not deliver
+  // sendData from those, so the result goes back to the bot's own server. The
+  // endpoint is resolved against this page's own directory: hosting at /salary
+  // must not produce a request outside /salary, or the reverse proxy will
+  // never see it.
+  const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+  const endpoint = base + "api/shift";
+
+  const errorEl = document.getElementById("error");
+
+  function showError(text) {
+    errorEl.textContent = text;
+    errorEl.classList.add("shown");
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("error");
+    if (tg && tg.MainButton) { tg.MainButton.hideProgress(); tg.MainButton.enable(); }
   }
+
+  async function submit() {
+    const { start, end } = times();
+    const shift = JSON.stringify({ date: iso(selected), start, end });
+
+    errorEl.classList.remove("shown");
+    if (tg && tg.MainButton) { tg.MainButton.showProgress(true); tg.MainButton.disable(); }
+
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: (tg && tg.initData) || "", shift }),
+      });
+    } catch (err) {
+      showError("לא הצלחתי להתחבר לבוט. בדוק את החיבור ונסה שוב.");
+      return;
+    }
+
+    if (!response.ok) {
+      let message = "";
+      try { message = (await response.json()).message || ""; } catch (err) { /* not JSON */ }
+      showError(message || `השמירה נכשלה (${response.status}).`);
+      return;
+    }
+
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+    if (tg) tg.close();
+  }
+
+  if (tg && tg.MainButton) tg.MainButton.onClick(submit);
 
   renderMonth();
   updateSummary();
