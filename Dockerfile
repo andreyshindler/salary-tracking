@@ -24,6 +24,13 @@ COPY salary_bot ./salary_bot
 
 RUN pip install --no-cache-dir .
 
+# The page is a data file, not a module: verify the install actually carried it,
+# from a directory where the source tree cannot mask the installed package.
+RUN cd / && python -c "\
+from pathlib import Path; import salary_bot; \
+page = Path(salary_bot.__file__).parent / 'webapp' / 'index.html'; \
+assert page.is_file(), f'the Mini App page is missing from the package: {page}'"
+
 # Run unprivileged. /data is the mount point for the SQLite file and must be
 # owned by this user, or the first write fails with a permission error.
 RUN useradd --system --uid 10001 --create-home --home-dir /home/app app \

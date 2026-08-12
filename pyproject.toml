@@ -24,6 +24,12 @@ salary-bot = "salary_bot.bot.main:run"
 [tool.setuptools.packages.find]
 include = ["salary_bot*"]
 
+# The Mini App page is not a .py file, so setuptools would leave it out of the
+# installed package and the server would 404 on every request. The Dockerfile
+# asserts it survived the install.
+[tool.setuptools.package-data]
+salary_bot = ["webapp/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"

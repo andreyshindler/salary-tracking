@@ -55,6 +55,15 @@ def build_app() -> web.Application:
 
 
 async def start(host: str, port: int) -> web.AppRunner:
+    page = WEBAPP_DIR / "index.html"
+    if not page.is_file():
+        # Without this the failure surfaces as a bare 404 inside Telegram, with
+        # nothing to say the packaging is at fault.
+        raise RuntimeError(
+            f"the Mini App page is missing at {page}. It is a data file rather "
+            "than a module, so it only ships if package-data is declared."
+        )
+
     runner = web.AppRunner(build_app(), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
