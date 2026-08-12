@@ -25,11 +25,11 @@ log = logging.getLogger(__name__)
 
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 
-# (init_data, payload) -> (http status, message for the user)
-Submit = Callable[[str, str], Awaitable[tuple[int, str]]]
+# (init_data, body) -> (http status, JSON to return)
+Endpoint = Callable[[str, dict], Awaitable[tuple[int, dict]]]
 
-# Bigger than any real submission — two short times and a date — so a runaway
-# or hostile body is dropped before it is parsed.
+# Bigger than any real request — a date, two short times and the launch
+# parameters — so a runaway or hostile body is dropped before it is parsed.
 MAX_BODY_BYTES = 8 * 1024
 
 
@@ -50,11 +50,13 @@ async def _health(_request: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
-def _make_submit_handler(submit: Submit | None):
+def _make_api_handler(api: dict[str, Endpoint] | None):
     async def handler(request: web.Request) -> web.Response:
-        if submit is None:      # only in tests, and when serving the page alone
-            return web.json_response({"message": "not accepting submissions"},
-                                     status=503)
+        endpoint = (api or {}).get(request.match_info["name"])
+        if endpoint is None:
+            # Serving the page without an API is a valid configuration in tests;
+            # in production it would mean a route that was never wired up.
+            return web.json_response({"message": "no such endpoint"}, status=404)
 
         if request.content_length is not None and request.content_length > MAX_BODY_BYTES:
             return web.json_response({"message": "too large"}, status=413)
@@ -63,29 +65,24 @@ def _make_submit_handler(submit: Submit | None):
             body = json.loads(await request.content.read(MAX_BODY_BYTES + 1))
         except (ValueError, UnicodeDecodeError):
             return web.json_response({"message": "malformed request"}, status=400)
-        if not isinstance(body, dict):
+        if not isinstance(body, dict) or not isinstance(body.get("initData"), str):
             return web.json_response({"message": "malformed request"}, status=400)
 
-        init_data = body.get("initData")
-        shift = body.get("shift")
-        if not isinstance(init_data, str) or not isinstance(shift, str):
-            return web.json_response({"message": "malformed request"}, status=400)
-
-        status, message = await submit(init_data, shift)
-        return web.json_response({"message": message}, status=status)
+        status, payload = await endpoint(body["initData"], body)
+        return web.json_response(payload, status=status)
 
     return handler
 
 
-def build_app(submit: Submit | None = None) -> web.Application:
+def build_app(api: dict[str, Endpoint] | None = None) -> web.Application:
     app = web.Application()
-    handler = _make_submit_handler(submit)
+    handler = _make_api_handler(api)
     app.add_routes([
         # Registered before the catch-all, and under both spellings: hosting the
         # app at /salary means the proxy either strips the prefix or keeps it,
         # and the page cannot tell which it will be.
-        web.post("/api/shift", handler),
-        web.post("/{prefix:.*}/api/shift", handler),
+        web.post("/api/{name}", handler),
+        web.post("/{prefix:.*}/api/{name}", handler),
 
         web.get("/healthz", _health),
         web.get("/", _index),
@@ -98,7 +95,8 @@ def build_app(submit: Submit | None = None) -> web.Application:
     return app
 
 
-async def start(host: str, port: int, submit: Submit | None = None) -> web.AppRunner:
+async def start(host: str, port: int,
+                api: dict[str, Endpoint] | None = None) -> web.AppRunner:
     page = WEBAPP_DIR / "index.html"
     if not page.is_file():
         # Without this the failure surfaces as a bare 404 inside Telegram, with
@@ -108,7 +106,7 @@ async def start(host: str, port: int, submit: Submit | None = None) -> web.AppRu
             "than a module, so it only ships if package-data is declared."
         )
 
-    runner = web.AppRunner(build_app(submit), access_log=None)
+    runner = web.AppRunner(build_app(api), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()

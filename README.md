@@ -75,27 +75,32 @@ arrangement.
 ## The menu
 
 ```
-▶️ התחלת משמרת   /   ⏹ סיום משמרת      ✍️ רישום ידני
 🗓 יומן                                  📊 מצב החודש
 🗓 המשמרות שלי                          📈 דוחות
 ⚙️ הגדרות                                ❓ עזרה
 ```
 
+Everything is entered through the diary, so there is no separate start-a-shift
+or type-it-by-hand button to choose between. A shift left running from an
+earlier version can still be closed with `/shift`, and typing a line straight
+into the chat still records one — those paths simply are not advertised.
+
+- **🗓 יומן** opens the **Mini App** on the first tap when one is configured: a
+  month calendar with two scrolling time wheels, matching the Telegram theme.
+  Without a public HTTPS address it falls back to an inline month grid — laid
+  out right to left with ראשון on the right, marking days that already have
+  hours (`•`), חג (`✡`) so the 200% days are visible in advance, and today in
+  brackets.
 - **📊 מצב החודש** is the headline screen: earned so far, remaining until the
   ceiling, a progress bar, hours split by rate tier, how many more hours you can
   still work, and the date you would cross at the current pace.
-- **🗓 יומן** opens the **Mini App** on the first tap when one is configured: a
-  month calendar with two scrolling time wheels, matching the Telegram theme.
-  Without a public
-  HTTPS address it falls back to an inline month grid — laid out right to left
-  with ראשון on the right, marking days that already have hours (`•`), חג (`✡`)
-  so the 200% days are visible in advance, and today in brackets.
-- **✍️ רישום ידני** takes a typed line — `16:00 21:30`, `אתמול 16:00 21:30`,
-  `12/09 16:00 21:30` — the fastest path for a recent day. An end earlier than
-  the start is read as an overnight shift.
-- **📈 דוחות** covers the monthly summary, a breakdown by tier, an annual table,
-  a forecast, and a CSV export (one row per priced segment, so it can be checked
-  line by line).
+- **📈 דוחות** opens the Mini App on its reports screen: the month's earnings
+  against the ceiling, a tier breakdown, the month's shifts, a year tab, and
+  a CSV export that arrives as a file in the chat. Without a Mini App the same
+  reports are rendered as chat messages.
+- Typing a line — `16:00 21:30`, `אתמול 16:00 21:30`, `12/09 16:00 21:30` — is
+  still the fastest path for a recent day. An end earlier than the start is read
+  as an overnight shift.
 - **⚙️ הגדרות** holds the two base rates, the ceiling, the rate table and the
   notification switches, plus **🔄 חשב מחדש** to re-price every stored shift
   after a rules change.
@@ -121,15 +126,28 @@ than only a total, with **עריכה / מחיקה** on the card itself:
 
 ### Commands
 
-`/start` · `/shift` (toggles start/stop) · `/status` · `/add` · `/calendar` ·
-`/report` · `/settings` · `/undo` · `/help`
+`/start` · `/calendar` · `/status` · `/report` · `/settings` · `/undo` · `/help`
+
+Also registered but not offered in the menu: `/shift` (closes a shift left
+running from an earlier version) and `/add`.
 
 ## The Mini App
 
+One page with two screens, told apart by a query parameter — which survives
+every reverse-proxy arrangement, unlike a path that may or may not keep its
+prefix. Both use Telegram's own theme colours, so they match the client in
+light and dark.
+
 **🗓 יומן** opens a proper calendar inside Telegram on the first tap: pick a
 date, spin the hour and minute wheels for start and end, and the shift comes
-straight back as a breakdown card. It uses Telegram's own theme colours, so it
-matches the client in light and dark.
+straight back as a breakdown card.
+
+**📈 דוחות** opens the same page on its reports screen: the month's earnings
+against the ceiling with a progress bar, headroom in shekels and in hours, the
+projected crossing date, a breakdown by rate tier, the month's shifts, and a
+year tab. Arrows step through months. **📤 ייצוא CSV** asks the bot to send the
+file to the chat rather than downloading it in the app, because a file in the
+chat is the one that survives the app being closed.
 
 It is **off unless you configure it**, because Telegram refuses to open a Mini
 App over anything but HTTPS with a valid certificate. With `WEBAPP_URL` unset,
@@ -175,21 +193,24 @@ by hand.
 
 Then `docker compose up -d` and open 🗓 יומן.
 
-**How the data comes back.** 🗓 יומן in the main menu is itself a `web_app`
-button, so the first tap opens the calendar — there is no intermediate message
-with a second button to press. Telegram does not deliver `sendData` from an
-inline button, so the page posts its result to the bot's own server instead, at
-`api/shift` **relative to the page's own address**: hosted at `/salary`, the
-request goes to `/salary/api/shift` and stays inside the proxy's location
-block. The server accepts it with or without the prefix.
+**How it talks to the bot.** The menu buttons are themselves `web_app` buttons,
+so the first tap opens the app — there is no intermediate message with a second
+button to press. Telegram does not deliver `sendData` from an inline button, so
+the page calls the bot's own server instead, at `api/…` **relative to the
+page's own address**: hosted at `/salary`, a request goes to
+`/salary/api/report` and stays inside the proxy's location block. The server
+accepts the path with or without the prefix. Three endpoints — `shift`,
+`report`, `export`.
 
-That POST is the one route into the database that does not arrive through
-Telegram, so it authenticates. Telegram signs the launch parameters with a key
+Those POSTs are the only routes into the database that do not arrive through
+Telegram, so they authenticate. Telegram signs the launch parameters with a key
 derived from the bot token; `salary_bot/core/webauth.py` recomputes the HMAC
 and refuses anything unsigned, signed with a different token, tampered with,
 timestamped more than 24 hours away, or naming no user. A valid signature only
-proves *which* account is posting — access control is applied on top of it, so
-an unapproved user is refused exactly as they would be in chat.
+proves *which* account is calling — access control is applied on top of it, so
+an unapproved user is refused exactly as they would be in chat. The check sits
+in one wrapper around every endpoint, so adding an endpoint cannot accidentally
+add an unauthenticated one.
 
 The returned JSON is built by a page on your phone, so it is validated rather
 than trusted: shape, date format, `HH:MM` times, and a plausible date range are
@@ -363,12 +384,14 @@ salary_bot/
 │   ├── webauth.py            # verifies Telegram's signature on Mini App posts
 │   └── models.py, db.py, timeutil.py, cities.py
 ├── webapp/
-│   └── index.html            # the Mini App: calendar + hour wheels
+│   └── index.html            # the Mini App: calendar + reports, one page
 └── bot/
     ├── main.py               # wiring
     ├── texts_he.py           # every Hebrew string
     ├── formatting.py         # cards and tables
     ├── keyboards.py          # menus and callback vocabulary
+    ├── webserver.py          # serves the page, routes the api/ POSTs
+    ├── report_payload.py     # the reports, as JSON the page can render
     └── handlers/
 ```
 

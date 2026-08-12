@@ -13,6 +13,7 @@ import re
 
 import pytest
 
+from salary_bot.bot import formatting as fmt
 from salary_bot.bot import keyboards as kb
 from salary_bot.bot import webserver
 from salary_bot.bot.handlers import calendar as cal_handlers
@@ -79,7 +80,7 @@ async def test_the_page_is_served(aiohttp_client):
     assert "telegram-web-app.js" in body, "the Telegram bridge must be loaded"
     assert 'dir="rtl"' in body
     assert "scroll-snap-type" in body, "the hour wheels rely on scroll snapping"
-    assert "api/shift" in body, "the page must post its result back to the bot"
+    assert 'base + "api/"' in body, "the page must post its result back to the bot"
 
 
 @pytest.mark.asyncio
@@ -108,7 +109,7 @@ def test_the_page_posts_inside_its_own_directory():
     reverse proxy would never route to this server."""
     html = (webserver.WEBAPP_DIR / "index.html").read_text(encoding="utf-8")
     assert 'location.pathname.endsWith("/")' in html
-    assert '"/api/shift"' not in html, "an absolute path would escape the prefix"
+    assert '"/api/"' not in html, "an absolute path would escape the prefix"
 
 
 # ------------------------------------------------------- opening it, one tap
@@ -189,7 +190,7 @@ def posting(webapp_env):
     bot = FakeBot()
 
     async def make(aiohttp_client):
-        app = webserver.build_app(webapp.submitter(bot, TOKEN))
+        app = webserver.build_app(webapp.build_api(bot, TOKEN))
         return await aiohttp_client(app)
 
     return bot, make
@@ -370,6 +371,132 @@ async def test_an_oversized_body_is_dropped(aiohttp_client, posting):
     response = await client.post("/api/shift", data="x" * (webserver.MAX_BODY_BYTES + 1))
     assert response.status in (400, 413)
     assert bot.messages == []
+
+
+# ------------------------------------------------------------------ reports
+
+def test_the_menu_reports_button_opens_the_app(webapp_env):
+    markup = common.main_menu_markup(TG_ID)
+    reports = [b for row in markup.inline_keyboard for b in row if "דוחות" in b.text][0]
+    assert reports.web_app is not None
+    assert reports.web_app.url.endswith("?view=reports"), \
+        "the same page, opened on its reports screen"
+
+
+def test_without_the_app_reports_stay_in_the_chat(bot_env):
+    markup = common.main_menu_markup(TG_ID)
+    reports = [b for row in markup.inline_keyboard for b in row if "דוחות" in b.text][0]
+    assert reports.web_app is None
+    assert reports.callback_data == "rep:menu"
+
+
+@pytest.mark.asyncio
+async def test_the_report_reflects_the_logged_hours(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+    await post_shift(client, signed(),
+                     {"date": "2026-06-10", "start": "09:00", "end": "15:00"})
+
+    response = await client.post(
+        "/api/report", json={"initData": signed(), "year": 2026, "month": 6})
+    assert response.status == 200
+    data = await response.json()
+
+    assert data["month"]["label"] == "יוני 2026"
+    assert data["month"]["shiftCount"] == 1
+    assert data["month"]["hours"] == "6"
+    assert data["month"]["earned"] == fmt.fmt_money(6 * RATE)
+    assert [t["pct"] for t in data["month"]["tiers"]] == ["100%"]
+    assert data["month"]["shifts"][0]["date"] == "10.06"
+
+    assert [r["short"] for r in data["year"]["rows"]] == ["יוני"]
+    assert data["year"]["earned"] == fmt.fmt_money(6 * RATE)
+    assert {"year": 2026, "month": 6} in [
+        {"year": m["year"], "month": m["month"]} for m in data["months"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_month_with_nothing_in_it_reports_zero(aiohttp_client, posting):
+    """Stepping back through months must not fail on an empty one."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post(
+        "/api/report", json={"initData": signed(), "year": 2019, "month": 3})
+    data = await response.json()
+    assert response.status == 200
+    assert data["month"]["shiftCount"] == 0
+    assert data["month"]["tiers"] == []
+    assert data["month"]["shifts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_nonsense_month_falls_back_to_today(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post(
+        "/api/report", json={"initData": signed(), "year": "; DROP", "month": 99})
+    assert response.status == 200
+    today = dt.date.today()
+    data = await response.json()
+    assert (data["month"]["year"], data["month"]["month"]) == (today.year, today.month)
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_cannot_read_the_report(aiohttp_client, posting):
+    """The report is somebody's earnings; a signature is not permission."""
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post("/api/report", json={"initData": signed(999)})
+    assert response.status == 403
+    assert "month" not in await response.json()
+
+
+@pytest.mark.asyncio
+async def test_an_unsigned_request_cannot_read_the_report(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post(
+        "/api/report", json={"initData": signed(token="999:wrong")})
+    assert response.status == 401
+
+
+@pytest.mark.asyncio
+async def test_export_sends_the_csv_to_the_chat(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+    await post_shift(client, signed(),
+                     {"date": "2026-06-10", "start": "09:00", "end": "15:00"})
+
+    response = await client.post(
+        "/api/export", json={"initData": signed(), "year": 2026, "month": 6})
+    assert response.status == 200
+
+    assert len(bot.documents) == 1
+    assert bot.documents[0]["chat_id"] == TG_ID
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_cannot_trigger_an_export(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post("/api/export", json={"initData": signed(999)})
+    assert response.status == 403
+    assert bot.documents == []
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_endpoint_is_not_served(aiohttp_client, posting):
+    bot, make = posting
+    client = await make(aiohttp_client)
+
+    response = await client.post("/api/whatever", json={"initData": signed()})
+    assert response.status == 404
 
 
 # ----------------------------------------- sendData, from a stale keyboard

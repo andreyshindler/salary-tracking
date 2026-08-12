@@ -18,12 +18,14 @@ from .handlers import (
 
 log = logging.getLogger(__name__)
 
+# Hours are entered through the diary, so /shift and /add are not advertised
+# here. Their handlers stay registered: /shift is the only way to close a shift
+# left running from an earlier version, and a shift typed straight into the chat
+# still works for anyone who prefers it.
 COMMANDS = [
     BotCommand("start", "תפריט ראשי"),
-    BotCommand("shift", "התחלה או סיום משמרת"),
-    BotCommand("status", "מצב החודש"),
-    BotCommand("add", "רישום ידני של משמרת"),
     BotCommand("calendar", "יומן — בחירת יום והוספת שעות"),
+    BotCommand("status", "מצב החודש"),
     BotCommand("report", "דוחות"),
     BotCommand("settings", "הגדרות"),
     BotCommand("undo", "מחיקת הרישום האחרון"),
@@ -41,7 +43,7 @@ async def _post_init(app: Application) -> None:
         # Runs in the bot's own loop: one process, one thing to supervise.
         app.bot_data["webapp_runner"] = await webserver.start(
             config.webapp_host, config.webapp_port,
-            submit=webapp.submitter(app.bot, config.bot_token),
+            api=webapp.build_api(app.bot, config.bot_token),
         )
         log.info("Mini App enabled at %s", config.webapp_url)
     else:

@@ -5,6 +5,8 @@ areas with one regex each.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from telegram import InlineKeyboardButton as Btn
 from telegram import InlineKeyboardMarkup as Markup
 from telegram import WebAppInfo
@@ -17,37 +19,47 @@ from .formatting import shift_button_label
 CB_MAIN = "m:main"
 
 
-def calendar_button(calendar_url: str | None) -> Btn:
-    """The diary opens the Mini App on the first tap when it is configured.
+@dataclass(frozen=True)
+class AppLinks:
+    """Mini App addresses, or None where it is not configured.
 
-    A ``web_app`` button launches the app directly, so there is no intermediate
-    message with a second button to press. Without an HTTPS address there is no
-    app to launch and the button falls back to the inline month grid.
+    Carried as one value so a menu built anywhere in the codebase offers the
+    same buttons — an omitted link silently downgrades to the chat fallback,
+    which is exactly the kind of difference nobody notices.
     """
-    if calendar_url:
-        return Btn(T.BTN_CALENDAR, web_app=WebAppInfo(url=calendar_url))
-    return Btn(T.BTN_CALENDAR, callback_data="cal:today")
+
+    calendar: str | None = None
+    reports: str | None = None
 
 
-def main_menu(has_open_shift: bool, calendar_url: str | None = None) -> Markup:
-    """The open-shift button replaces the start button rather than sitting
-    beside it — only one of the two is ever a valid action."""
-    toggle = (
-        Btn(T.BTN_STOP_SHIFT, callback_data="sh:stop")
-        if has_open_shift
-        else Btn(T.BTN_START_SHIFT, callback_data="sh:start")
-    )
+def _app_or_chat(label: str, url: str | None, callback: str) -> Btn:
+    """A ``web_app`` button opens the app on the first tap, with no intermediate
+    message to press through. Without an HTTPS address there is no app to open,
+    and the button falls back to the in-chat version."""
+    if url:
+        return Btn(label, web_app=WebAppInfo(url=url))
+    return Btn(label, callback_data=callback)
+
+
+def calendar_button(calendar_url: str | None) -> Btn:
+    return _app_or_chat(T.BTN_CALENDAR, calendar_url, "cal:today")
+
+
+def main_menu(has_open_shift: bool, links: AppLinks = AppLinks()) -> Markup:
+    """Hours are entered through the diary, so the menu offers no separate
+    start-a-shift or type-it-by-hand buttons."""
     rows = [
-        [toggle, Btn(T.BTN_MANUAL, callback_data="man:new")],
-        [calendar_button(calendar_url),
+        [calendar_button(links.calendar),
          Btn(T.BTN_STATUS, callback_data="st:cur")],
-        [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu"), Btn(T.BTN_REPORTS, callback_data="rep:menu")],
+        [Btn(T.BTN_MY_SHIFTS, callback_data="ls:menu"),
+         _app_or_chat(T.BTN_REPORTS, links.reports, "rep:menu")],
         [Btn(T.BTN_SETTINGS, callback_data="set:menu"), Btn(T.BTN_HELP, callback_data="help")],
     ]
     if has_open_shift:
-        rows.insert(1, [Btn(T.BTN_CANCEL_SHIFT, callback_data="sh:cancel")])
-    else:
-        rows[0].insert(1, Btn(T.BTN_START_EARLIER, callback_data="sh:earlier"))
+        # A shift left running from before the start buttons went away still
+        # has to be closable, so these appear only while one exists.
+        rows.insert(0, [Btn(T.BTN_STOP_SHIFT, callback_data="sh:stop"),
+                        Btn(T.BTN_CANCEL_SHIFT, callback_data="sh:cancel")])
     return Markup(rows)
 
 

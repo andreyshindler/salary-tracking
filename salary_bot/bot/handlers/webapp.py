@@ -31,8 +31,9 @@ from ...core import db, repo, webauth
 from ...core import timeutil as tu
 from .. import formatting as fmt
 from .. import keyboards as kb
+from .. import report_payload
 from .. import texts_he as T
-from . import common
+from . import common, reports
 from .common import calendar_url, get_calendar, guard
 from .shift import MAX_SHIFT_HOURS, _ceiling_alert
 
@@ -133,7 +134,7 @@ async def record(bot, tg_user_id: int, raw_payload: str) -> None:
         await bot.send_message(tg_user_id, alert, parse_mode=ParseMode.HTML)
 
 
-# ------------------------------------------------------------ the POST route
+# ------------------------------------------------------------- the POST API
 
 def _is_approved(tg_user_id: int) -> bool:
     """The same gate the message handlers apply, without an Update to hand.
@@ -148,28 +149,57 @@ def _is_approved(tg_user_id: int) -> bool:
         return access.is_approved(user)
 
 
-def submitter(bot, bot_token: str):
-    """Build the callback the web server hands each POST from the page."""
+def build_api(bot, bot_token: str) -> dict:
+    """The endpoints the page may call, each behind the signature check.
 
-    async def submit(init_data: str, payload: str) -> tuple[int, str]:
-        try:
-            tg_user_id = webauth.verify_init_data(init_data, bot_token)
-        except webauth.InitDataError as exc:
-            log.warning("Refused an unverified Mini App submission: %s", exc)
-            return 401, T.WEBAPP_UNVERIFIED
+    Authentication lives here rather than in the web server so that adding an
+    endpoint cannot accidentally add an unauthenticated one.
+    """
 
-        if not _is_approved(tg_user_id):
-            log.warning("Refused a Mini App submission from %s: no access", tg_user_id)
-            return 403, T.WEBAPP_NO_ACCESS
+    def authenticated(handler):
+        async def wrapped(init_data: str, body: dict) -> tuple[int, dict]:
+            try:
+                tg_user_id = webauth.verify_init_data(init_data, bot_token)
+            except webauth.InitDataError as exc:
+                log.warning("Refused an unverified Mini App request: %s", exc)
+                return 401, {"message": T.WEBAPP_UNVERIFIED}
 
-        try:
-            await record(bot, tg_user_id, payload)
-        except Rejected as exc:
-            log.info("Rejected a Mini App payload from %s: %s", tg_user_id, exc)
-            return 400, str(exc)
-        return 200, "ok"
+            if not _is_approved(tg_user_id):
+                log.warning("Refused a Mini App request from %s: no access", tg_user_id)
+                return 403, {"message": T.WEBAPP_NO_ACCESS}
 
-    return submit
+            try:
+                return await handler(tg_user_id, body)
+            except Rejected as exc:
+                log.info("Rejected a Mini App request from %s: %s", tg_user_id, exc)
+                return 400, {"message": str(exc)}
+
+        return wrapped
+
+    async def shift(tg_user_id: int, body: dict) -> tuple[int, dict]:
+        payload = body.get("shift")
+        if not isinstance(payload, str):
+            raise Rejected(T.WEBAPP_BAD_PAYLOAD)
+        await record(bot, tg_user_id, payload)
+        return 200, {"message": "ok"}
+
+    async def report(tg_user_id: int, body: dict) -> tuple[int, dict]:
+        year, month = report_payload.parse_month(body)
+        with db.session_scope() as s:
+            user = db.get_or_create_user(s, tg_user_id)
+            calendar = get_calendar(user.city)
+            return 200, report_payload.build(s, user, calendar, year, month)
+
+    async def export(tg_user_id: int, body: dict) -> tuple[int, dict]:
+        year, _ = report_payload.parse_month(body)
+        await reports.send_csv(bot, tg_user_id, year or tu.now_local().year)
+        return 200, {"message": T.WEBAPP_EXPORT_SENT}
+
+    return {
+        "shift": authenticated(shift),
+        "report": authenticated(report),
+        "export": authenticated(export),
+    }
 
 
 # ------------------------------------------- sendData, from an older keyboard

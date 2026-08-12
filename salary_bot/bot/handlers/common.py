@@ -69,6 +69,17 @@ def calendar_url() -> str | None:
     return f"{CONFIG.webapp_url}/?rest={','.join(rest)}"
 
 
+def reports_url() -> str | None:
+    """The same page, opened on its reports view."""
+    if CONFIG is None or not CONFIG.webapp_enabled:
+        return None
+    return f"{CONFIG.webapp_url}/?view=reports"
+
+
+def app_links() -> kb.AppLinks:
+    return kb.AppLinks(calendar=calendar_url(), reports=reports_url())
+
+
 async def _send(update: Update, text: str, markup=None) -> None:
     if update.callback_query:
         await update.callback_query.answer()
@@ -175,7 +186,7 @@ def main_menu_markup(tg_user_id: int):
     with db.session_scope() as s:
         user = db.get_or_create_user(s, tg_user_id)
         has_open = repo.open_shift(s, user.id) is not None
-    return kb.main_menu(has_open, calendar_url())
+    return kb.main_menu(has_open, app_links())
 
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

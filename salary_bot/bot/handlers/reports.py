@@ -109,14 +109,21 @@ async def cb_year_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cb_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """One row per priced segment — the form an accountant can actually check."""
     if not await guard(update, context):
         return
     await update.callback_query.answer()
+    await send_csv(context.bot, update.effective_chat.id, tu.now_local().year)
 
-    year = tu.now_local().year
+
+async def send_csv(bot, tg_user_id: int, year: int) -> None:
+    """One row per priced segment — the form an accountant can actually check.
+
+    Sent as a document through the bot rather than downloaded in the Mini App,
+    because a file arriving in the chat is the one that survives the app being
+    closed.
+    """
     with db.session_scope() as s:
-        user = db.get_or_create_user(s, update.effective_user.id)
+        user = db.get_or_create_user(s, tg_user_id)
         calendar = get_calendar(user.city)
 
         buffer = io.StringIO()
@@ -152,8 +159,8 @@ async def cb_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # utf-8-sig: without the BOM, Excel on Windows renders the Hebrew as mojibake.
     data = buffer.getvalue().encode("utf-8-sig")
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
+    await bot.send_document(
+        chat_id=tg_user_id,
         document=InputFile(io.BytesIO(data), filename=f"shifts-{year}.csv"),
         caption=f"📤 כל המשמרות של {year}",
     )

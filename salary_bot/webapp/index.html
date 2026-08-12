@@ -95,9 +95,46 @@
   }
   .error.shown { display: block; }
   .warn { color: #d1453b; }
+
+  /* ------------------------------------------------------------- reports */
+  .view[hidden] { display: none; }
+
+  .headline { text-align: center; padding: 4px 0 2px; }
+  .headline .amount { font-size: 32px; font-weight: 700; line-height: 1.1; }
+  .headline .of { color: var(--hint); font-size: 14px; margin-top: 2px; }
+
+  .bar { height: 10px; border-radius: 5px; background: var(--bg); overflow: hidden; margin: 12px 0 8px; }
+  .bar > span { display: block; height: 100%; background: var(--button); border-radius: 5px; }
+  .bar.over > span { background: #d1453b; }
+
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .fact { background: var(--bg); border-radius: 10px; padding: 8px 10px; }
+  .fact .k { color: var(--hint); font-size: 12px; }
+  .fact .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+  table.rows { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.rows th { color: var(--hint); font-weight: 500; font-size: 12px; text-align: right; padding: 0 4px 6px; }
+  table.rows td { padding: 7px 4px; border-top: 1px solid var(--bg); text-align: right; }
+  table.rows td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.rows tr.total td { font-weight: 700; border-top: 2px solid var(--bg); }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button {
+    flex: 1; padding: 9px 0; border: 0; border-radius: 10px; font-size: 15px;
+    background: var(--secondary-bg); color: var(--text);
+  }
+  .tabs button.on { background: var(--button); color: var(--button-text); font-weight: 600; }
+
+  .linkish {
+    display: block; width: 100%; padding: 11px 0; border: 0; border-radius: 10px;
+    background: var(--secondary-bg); color: var(--link); font-size: 15px;
+  }
+  .empty { color: var(--hint); text-align: center; padding: 14px 0; font-size: 14px; }
 </style>
 </head>
 <body>
+
+<div id="calendarView" class="view">
 
 <div class="card">
   <div class="month-bar">
@@ -130,6 +167,54 @@
   <div class="error" id="error"></div>
 </div>
 
+</div><!-- /calendarView -->
+
+<div id="reportsView" class="view" hidden>
+  <div class="tabs">
+    <button id="tabMonth" class="on">חודש</button>
+    <button id="tabYear">שנה</button>
+  </div>
+
+  <div id="monthPane">
+    <div class="card">
+      <div class="month-bar">
+        <button id="rPrev" aria-label="חודש קודם">‹</button>
+        <h2 id="rMonthName"></h2>
+        <button id="rNext" aria-label="חודש הבא">›</button>
+      </div>
+      <div class="headline">
+        <div class="amount" id="rEarned">—</div>
+        <div class="of" id="rOf"></div>
+      </div>
+      <div class="bar" id="rBar"><span style="width:0"></span></div>
+      <div class="facts" id="rFacts"></div>
+    </div>
+
+    <div class="card">
+      <h2>🧮 פילוח לפי תעריף</h2>
+      <div id="rTiers"></div>
+    </div>
+
+    <div class="card">
+      <h2>🗓 המשמרות</h2>
+      <div id="rShifts"></div>
+    </div>
+  </div>
+
+  <div id="yearPane" hidden>
+    <div class="card">
+      <h2 id="rYearName"></h2>
+      <div id="rYear"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <button class="linkish" id="rExport">📤 ייצוא CSV לצ׳אט</button>
+  </div>
+
+  <div class="error" id="rError"></div>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -150,6 +235,35 @@
   // Rest days the bot passed in, so חג and שבת are visible before you pick them.
   const params = new URLSearchParams(location.search);
   const restDays = new Set((params.get("rest") || "").split(",").filter(Boolean));
+
+  // One page, two screens. The bot's menu buttons differ only by this
+  // parameter, which survives every reverse-proxy arrangement — unlike a path,
+  // which may or may not keep its prefix.
+  const screen = params.get("view") === "reports" ? "reports" : "calendar";
+  document.getElementById("calendarView").hidden = screen !== "calendar";
+  document.getElementById("reportsView").hidden = screen !== "reports";
+
+  // Requests go to api/… relative to this page's own directory: hosted at
+  // /salary, they must stay inside /salary or the reverse proxy never sees them.
+  const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+
+  const esc = s => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  async function api(name, body) {
+    const response = await fetch(base + "api/" + name, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign(
+        { initData: (tg && tg.initData) || "" }, body || {})),
+    });
+    let data = null;
+    try { data = await response.json(); } catch (err) { /* not JSON */ }
+    if (!response.ok) {
+      throw new Error((data && data.message) || `הבקשה נכשלה (${response.status}).`);
+    }
+    return data;
+  }
 
   // ------------------------------------------------------------- calendar
   const dowEl = document.getElementById("dow");
@@ -287,7 +401,7 @@
       `<div><b>${start} – ${end}</b> · ${hours} שעות</div>` +
       (overnight ? `<div class="muted">חוצה חצות — הסיום למחרת</div>` : "");
 
-    if (tg && tg.MainButton) {
+    if (screen === "calendar" && tg && tg.MainButton) {
       tg.MainButton.setText(`שמור · ${hours} שעות`);
       if (!tg.MainButton.isVisible) tg.MainButton.show();
     }
@@ -295,13 +409,7 @@
 
   // ------------------------------------------------------------- submitting
   // The app is launched from an inline button, and Telegram does not deliver
-  // sendData from those, so the result goes back to the bot's own server. The
-  // endpoint is resolved against this page's own directory: hosting at /salary
-  // must not produce a request outside /salary, or the reverse proxy will
-  // never see it.
-  const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
-  const endpoint = base + "api/shift";
-
+  // sendData from those, so the result goes back to the bot's own server.
   const errorEl = document.getElementById("error");
 
   function showError(text) {
@@ -313,27 +421,13 @@
 
   async function submit() {
     const { start, end } = times();
-    const shift = JSON.stringify({ date: iso(selected), start, end });
-
     errorEl.classList.remove("shown");
     if (tg && tg.MainButton) { tg.MainButton.showProgress(true); tg.MainButton.disable(); }
 
-    let response;
     try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData: (tg && tg.initData) || "", shift }),
-      });
+      await api("shift", { shift: JSON.stringify({ date: iso(selected), start, end }) });
     } catch (err) {
-      showError("לא הצלחתי להתחבר לבוט. בדוק את החיבור ונסה שוב.");
-      return;
-    }
-
-    if (!response.ok) {
-      let message = "";
-      try { message = (await response.json()).message || ""; } catch (err) { /* not JSON */ }
-      showError(message || `השמירה נכשלה (${response.status}).`);
+      showError(err.message);
       return;
     }
 
@@ -341,10 +435,123 @@
     if (tg) tg.close();
   }
 
-  if (tg && tg.MainButton) tg.MainButton.onClick(submit);
+  if (screen === "calendar" && tg && tg.MainButton) tg.MainButton.onClick(submit);
+
+  // ---------------------------------------------------------------- reports
+  const rError = document.getElementById("rError");
+  let shown = null;      // {year, month} currently on screen
+
+  function rows(header, body, empty) {
+    if (!body.length) return `<div class="empty">${esc(empty)}</div>`;
+    return `<table class="rows"><thead><tr>${header}</tr></thead>`
+         + `<tbody>${body.join("")}</tbody></table>`;
+  }
+
+  function renderReport(data) {
+    const m = data.month;
+    shown = { year: m.year, month: m.month };
+
+    document.getElementById("rMonthName").textContent = m.label;
+    document.getElementById("rEarned").textContent = m.earned;
+    document.getElementById("rOf").textContent = `מתוך ${m.ceiling}`;
+
+    const bar = document.getElementById("rBar");
+    bar.classList.toggle("over", m.overCeiling);
+    bar.firstElementChild.style.width = m.pct + "%";
+
+    const facts = [
+      [m.overCeiling ? "חריגה מהתקרה" : "נותר עד התקרה", m.remaining],
+      ["ניצול", m.pctLabel],
+      ["שעות", m.hours],
+      ["משמרות", String(m.shiftCount)],
+      ["עוד שעות רגילות", m.overCeiling ? "—" : m.remainingBaseHours],
+      ["עוד שעות שבת/חג", m.overCeiling ? "—" : m.remainingRestHours],
+    ];
+    if (m.crossingDate) facts.push(["צפוי לחצות את התקרה", m.crossingDate]);
+    if (m.needsRate) facts.push(["⚠️ תעריף", "לא מוגדר"]);
+
+    document.getElementById("rFacts").innerHTML = facts.map(
+      ([k, v]) => `<div class="fact"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`
+    ).join("");
+
+    document.getElementById("rTiers").innerHTML = rows(
+      "<th>תעריף</th><th>שעות</th><th>סכום</th>",
+      m.tiers.map(t => `<tr><td>${esc(t.pct)} · ${esc(t.label)}</td>`
+                     + `<td class="num">${esc(t.hours)}</td>`
+                     + `<td class="num">${esc(t.amount)}</td></tr>`),
+      "אין עדיין שעות בחודש הזה.");
+
+    document.getElementById("rShifts").innerHTML = rows(
+      "<th>תאריך</th><th>שעות</th><th>סכום</th>",
+      m.shifts.map(sh => `<tr><td>${esc(sh.date)} ${esc(sh.day)}`
+                       + (sh.note ? ` · ${esc(sh.note)}` : "")
+                       + `<div class="k" style="color:var(--hint);font-size:12px">${esc(sh.span)}</div></td>`
+                       + `<td class="num">${esc(sh.hours)}</td>`
+                       + `<td class="num">${esc(sh.amount)}</td></tr>`),
+      "אין עדיין משמרות בחודש הזה.");
+
+    const y = data.year;
+    document.getElementById("rYearName").textContent = `🗂 סיכום ${y.year}`;
+    document.getElementById("rYear").innerHTML = rows(
+      "<th>חודש</th><th>שעות</th><th>סכום</th><th>ניצול</th>",
+      y.rows.map(r => `<tr><td>${esc(r.short)}</td>`
+                    + `<td class="num">${esc(r.hours)}</td>`
+                    + `<td class="num">${esc(r.earned)}</td>`
+                    + `<td class="num${r.overCeiling ? " warn" : ""}">${esc(r.pctLabel)}</td></tr>`)
+        .concat(y.rows.length
+          ? [`<tr class="total"><td>סה״כ</td><td class="num">${esc(y.hours)}</td>`
+             + `<td class="num">${esc(y.earned)}</td><td></td></tr>`]
+          : []),
+      "אין עדיין משמרות השנה.");
+  }
+
+  async function loadReport(year, month) {
+    rError.classList.remove("shown");
+    try {
+      renderReport(await api("report", year ? { year, month } : {}));
+    } catch (err) {
+      rError.textContent = err.message;
+      rError.classList.add("shown");
+    }
+  }
+
+  function stepMonth(delta) {
+    if (!shown) return;
+    const at = new Date(shown.year, shown.month - 1 + delta, 1);
+    loadReport(at.getFullYear(), at.getMonth() + 1);
+  }
+
+  document.getElementById("rPrev").addEventListener("click", () => stepMonth(-1));
+  document.getElementById("rNext").addEventListener("click", () => stepMonth(1));
+
+  const tabMonth = document.getElementById("tabMonth");
+  const tabYear = document.getElementById("tabYear");
+  function showPane(which) {
+    document.getElementById("monthPane").hidden = which !== "month";
+    document.getElementById("yearPane").hidden = which !== "year";
+    tabMonth.classList.toggle("on", which === "month");
+    tabYear.classList.toggle("on", which === "year");
+  }
+  tabMonth.addEventListener("click", () => showPane("month"));
+  tabYear.addEventListener("click", () => showPane("year"));
+
+  document.getElementById("rExport").addEventListener("click", async () => {
+    rError.classList.remove("shown");
+    try {
+      await api("export", shown ? { year: shown.year, month: shown.month } : {});
+    } catch (err) {
+      rError.textContent = err.message;
+      rError.classList.add("shown");
+      return;
+    }
+    // The file lands in the chat, which is where it is wanted — so get out of
+    // the way rather than reporting success in a window about to be closed.
+    if (tg) tg.close();
+  });
 
   renderMonth();
   updateSummary();
+  if (screen === "reports") loadReport();
 })();
 </script>
 </body>

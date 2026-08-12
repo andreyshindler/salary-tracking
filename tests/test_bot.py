@@ -174,7 +174,22 @@ def test_commands_are_declared(application):
     from salary_bot.bot.main import COMMANDS
 
     names = {c.command for c in COMMANDS}
-    assert {"start", "shift", "status", "add", "calendar", "report", "settings",
+    assert {"start", "status", "calendar", "report", "settings",
             "undo", "help"} == names
     for command in COMMANDS:
         assert command.description, f"/{command.command} has no description"
+
+
+def test_the_unadvertised_commands_still_work(application):
+    """/shift closes a shift left running from an earlier version, and /add
+    still accepts a typed line — they are simply not offered in the menu."""
+    from telegram.ext import CommandHandler
+
+    registered = {
+        command
+        for group in application.handlers.values()
+        for h in group
+        if isinstance(h, CommandHandler)
+        for command in h.commands
+    }
+    assert {"shift", "add"} <= registered

@@ -99,7 +99,7 @@ def _local_hhmm(naive_utc: dt.datetime) -> str:
     return tu.to_local(naive_utc).strftime("%H:%M")
 
 
-def _span(from_utc: dt.datetime, to_utc: dt.datetime) -> str:
+def time_span(from_utc: dt.datetime, to_utc: dt.datetime) -> str:
     """A time range, carrying the end date when it falls on another day.
 
     Without it a Shabbat window renders as "20:00–20:00", which reads as a
@@ -121,7 +121,7 @@ def shift_breakdown(shift: Shift, calendar: CalendarService) -> str:
         rate = f" × {fmt_money(seg.rate_agorot)}" if seg.rate_agorot else ""
         pieces = [
             f"• {fmt_pct(seg.multiplier)}{rate}",
-            _span(seg.from_utc, seg.to_utc),
+            time_span(seg.from_utc, seg.to_utc),
             f"{fmt_hours(seg.hours)} ש׳",
             fmt_money(seg.amount_agorot),
         ]
@@ -145,7 +145,7 @@ def shift_card(shift: Shift, calendar: CalendarService, status: MonthStatus | No
 
     lines = [
         rtl(header),
-        rtl(f"🕐 {_span(shift.start_utc, shift.end_utc)} · "
+        rtl(f"🕐 {time_span(shift.start_utc, shift.end_utc)} · "
             f"{fmt_hours(total_hours)} שעות"),
         "",
         shift_breakdown(shift, calendar),
