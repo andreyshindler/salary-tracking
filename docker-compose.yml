@@ -17,11 +17,16 @@ services:
       WEBAPP_PORT: 8080
 
     # The Mini App server. Only listening when WEBAPP_URL is set; point your
-    # reverse proxy here and give it a certificate, since Telegram will not
-    # open anything but HTTPS. Bound to localhost so nothing is exposed
-    # directly — remove the 127.0.0.1 prefix only if the proxy is elsewhere.
+    # reverse proxy at the host port and give it a certificate, since Telegram
+    # will not open anything but HTTPS. Bound to localhost so nothing is
+    # exposed directly — remove the 127.0.0.1 prefix only if the proxy is
+    # elsewhere.
+    #
+    # Host 8096 rather than 8080: 8080 is a popular default and is often
+    # already taken on a box running several services. Change the left-hand
+    # number if it clashes, and point the proxy at whatever you pick.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8096:8080"
 
     # A bind mount rather than a named volume: deploy/backup.sh then works
     # unchanged against ./data/salary.db, and the file can be copied off the

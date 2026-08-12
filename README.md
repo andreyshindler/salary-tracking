@@ -135,40 +135,42 @@ App over anything but HTTPS with a valid certificate. With `WEBAPP_URL` unset,
 🗓 יומן falls back to the inline grid, which needs no infrastructure at all.
 
 To enable it you need a domain pointed at the VPS and a reverse proxy holding
-the certificate. The container serves plain HTTP on port 8080, published on
-`127.0.0.1` so nothing is exposed directly:
+the certificate. The container serves plain HTTP, published on the host at
+`127.0.0.1:8096` so nothing is exposed directly. Port 8080 is deliberately
+avoided on the host side — it is a common default and is often already taken.
 
 ```
 WEBAPP_URL=https://bot.example.com
 ```
 
-Caddy, for example, needs one line and obtains the certificate itself:
+Caddy needs one line and obtains the certificate itself:
 
 ```
 bot.example.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8096
 }
 ```
 
 **A subpath works too** — `WEBAPP_URL=https://example.com/salary`. The server
 answers on any path, so it does not matter whether the proxy strips the prefix
-or forwards it:
-
-```
-example.com {
-    handle_path /salary/* {          # strips the prefix
-        reverse_proxy 127.0.0.1:8080
-    }
-}
-```
-
-or with nginx:
+or forwards it. With nginx, alongside other apps on the same host:
 
 ```nginx
+location = /salary { return 301 /salary/; }
+
 location /salary/ {
-    proxy_pass http://127.0.0.1:8080/;
+    proxy_pass http://127.0.0.1:8096/;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+The `= /salary` redirect matters when a catch-all `location /` exists: without
+it, the bare path falls through to whatever that catch-all proxies to. The bot
+always generates the trailing-slash form, so this only affects typing the URL
+by hand.
 
 Then `docker compose up -d` and open 🗓 יומן.
 
